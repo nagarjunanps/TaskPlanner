@@ -78,7 +78,9 @@ function DayCell({
           {day}
         </span>
         {isRunner && (
-          <Star size={8} className="text-amber-500 fill-amber-400 shrink-0" title="Runner" />
+          <span title="Runner" className="shrink-0">
+            <Star size={8} className="text-amber-500 fill-amber-400" />
+          </span>
         )}
       </div>
 

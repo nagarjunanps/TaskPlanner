@@ -5,11 +5,11 @@ import {
   startSolver, publishRoster, validateRoster,
   getRosterOverview, initializeAllTeams, generateRotation, setTeamDay,
 } from '../api/client'
-import type { Roster, Shift, SolverStatus, Staff, TeamMonthSummary, Violation } from '../api/types'
+import type { Roster, Shift, SolverStatus, Staff, Violation } from '../api/types'
 import EntryBadge from '../components/roster/EntryBadge'
 import SolverProgress from '../components/roster/SolverProgress'
 import ConstraintWarnings from '../components/roster/ConstraintWarnings'
-import { Play, CheckCircle, RefreshCw, ChevronLeft, Wand2, AlertTriangle, Users } from 'lucide-react'
+import { Play, CheckCircle, RefreshCw, ChevronLeft, Wand2, Users } from 'lucide-react'
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
@@ -378,7 +378,6 @@ function TeamDetailRoster({
   month: number
   onBack: () => void
 }) {
-  const qc = useQueryClient()
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
   const [violations, setViolations] = useState<Violation[]>([])
   const [validating, setValidating] = useState(false)

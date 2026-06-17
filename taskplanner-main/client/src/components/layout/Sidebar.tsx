@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Users, Calendar, ClipboardCheck, Clock,
   Plane, Award, UserCircle, List, ClipboardList,
-  Shield, ChevronDown, X,
+  ChevronDown, X,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useAuth } from '../../context/AuthContext'

@@ -31,12 +31,6 @@ function Spinner() {
   )
 }
 
-function RequireAuth({ children }: { children: ReactNode }) {
-  const { user, isLoading } = useAuth()
-  if (isLoading) return <Spinner />
-  return user ? <>{children}</> : <Navigate to="/login" replace />
-}
-
 function RequireAdmin({ children }: { children: ReactNode }) {
   const { user, isLoading } = useAuth()
   if (isLoading) return <Spinner />

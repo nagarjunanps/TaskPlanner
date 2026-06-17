@@ -9,7 +9,6 @@ export interface LoginResponse {
 }
 import type {
   CertificationType,
-  ConflictInfo,
   Department,
   Flight,
   FlightImpact,

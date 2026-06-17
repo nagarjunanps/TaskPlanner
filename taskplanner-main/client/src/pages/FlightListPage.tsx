@@ -279,8 +279,8 @@ export default function FlightListPage() {
   const [page,      setPage]      = useState(1)
   const [editFlight,   setEditFlight]   = useState<Flight | null>(null)
   const [impactData,   setImpactData]   = useState<{ impact: FlightImpact; flight: Flight } | null>(null)
-  const [solveJobId,   setSolveJobId]   = useState<string | null>(null)
   const [solveStatus,  setSolveStatus]  = useState<string | null>(null)
+  const [,             setSolveJobId]   = useState<string | null>(null)
   const [checkingId,   setCheckingId]   = useState<number | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -300,7 +300,7 @@ export default function FlightListPage() {
     retryDelay: 2000,
   })
 
-  const { data: teams = [] } = useQuery({ queryKey: ['teams'], queryFn: getTeams })
+  const { data: teams = [] } = useQuery({ queryKey: ['teams'], queryFn: () => getTeams() })
 
   const filtered = useMemo(() => {
     let list = flights

@@ -20,7 +20,7 @@ function StatCard({ icon: Icon, label, value, sub, color }: {
 }
 
 export default function DashboardPage() {
-  const { data: teams = [] } = useQuery({ queryKey: ['teams'], queryFn: getTeams })
+  const { data: teams = [] } = useQuery({ queryKey: ['teams'], queryFn: () => getTeams() })
   const { data: allStaff = [] } = useQuery({ queryKey: ['staff-all'], queryFn: () => getStaff({ active: true }) })
 
   const totalStaff = allStaff.length

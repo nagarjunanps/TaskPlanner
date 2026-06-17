@@ -23,7 +23,7 @@ export default function StaffPage() {
   const [editing,    setEditing]    = useState<Staff | null>(null)
   const [form,       setForm]       = useState<FormData>(EMPTY)
 
-  const { data: teams = [] } = useQuery({ queryKey: ['teams'], queryFn: getTeams })
+  const { data: teams = [] } = useQuery({ queryKey: ['teams'], queryFn: () => getTeams() })
   const { data: staff = [], refetch } = useQuery({
     queryKey: ['staff', filterTeam, filterRole],
     queryFn: () => getStaff({

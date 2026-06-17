@@ -94,7 +94,7 @@ export default function TaskPlannerPage() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const solveStartRef = useRef<number | null>(null)
 
-  const { data: teams = [] } = useQuery({ queryKey: ['teams'], queryFn: getTeams })
+  const { data: teams = [] } = useQuery({ queryKey: ['teams'], queryFn: () => getTeams() })
   const nbTeams = teams.filter(t => t.sub_department_id)
 
   const { data: staff = [] } = useQuery({
