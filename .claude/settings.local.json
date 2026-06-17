@@ -19,7 +19,11 @@
       "Bash(java -version)",
       "Bash(./venv/Scripts/python.exe -m pip show JPype1 timefold)",
       "Bash(docker *)",
-      "PowerShell(Get-Command *)"
+      "PowerShell(Get-Command *)",
+      "Bash(npm run *)",
+      "Bash(git commit *)",
+      "Bash(rm .git/COMMIT_EDITMSG_TMP)",
+      "Bash(git push *)"
     ]
   }
 }
