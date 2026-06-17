@@ -296,8 +296,6 @@ export default function FlightListPage() {
     queryKey: ['flights', date],
     queryFn:  () => getFlights(date),
     staleTime: 0,
-    retry: 2,
-    retryDelay: 2000,
   })
 
   const { data: teams = [] } = useQuery({ queryKey: ['teams'], queryFn: () => getTeams() })

@@ -17,8 +17,29 @@ import FlightListPage from './pages/FlightListPage'
 import StaffShiftPage from './pages/StaffShiftPage'
 import StaffTasksPage from './pages/StaffTasksPage'
 
+// Render's free-tier backend spins down when idle and can take 30-50s to
+// wake up, which exceeds Netlify's fixed ~30s proxy timeout (504). Retrying
+// a few times with backoff rides out that cold-start window. Only retry on
+// 502/503/504 or no response (network/timeout) — not on 4xx, since those
+// are real errors and mutations may have already succeeded server-side.
+function isColdStartError(error: unknown): boolean {
+  const status = (error as { response?: { status?: number } })?.response?.status
+  return status === undefined || status === 502 || status === 503 || status === 504
+}
+const coldStartRetryDelay = (attempt: number) => Math.min(3000 * (attempt + 1), 10_000)
+
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
+  defaultOptions: {
+    queries: {
+      retry: (failureCount, error) => failureCount < 3 && isColdStartError(error),
+      retryDelay: coldStartRetryDelay,
+      staleTime: 30_000,
+    },
+    mutations: {
+      retry: (failureCount, error) => failureCount < 3 && isColdStartError(error),
+      retryDelay: coldStartRetryDelay,
+    },
+  },
 })
 
 // ── Route guards ──────────────────────────────────────────────────────────────

@@ -23,7 +23,8 @@
       "Bash(npm run *)",
       "Bash(git commit *)",
       "Bash(rm .git/COMMIT_EDITMSG_TMP)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(curl *)"
     ]
   }
 }
