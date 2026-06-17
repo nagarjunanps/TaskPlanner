@@ -362,7 +362,7 @@ Client and server deploy **separately** — Netlify can only serve static files,
 
 ### Backend → Render (or any Docker-capable host)
 
-`server/Dockerfile` builds a `python:3.12-slim` image with `openjdk-17-jre-headless` installed (Timefold needs a real JVM — `pip install` alone can never provide that) and runs `start.sh`, which seeds the DB (safe/idempotent on every boot) before starting uvicorn.
+`server/Dockerfile` builds a `python:3.12-slim` image with `openjdk-21-jdk-headless` installed (Timefold needs a real JVM — `pip install` alone can never provide that; `python:3.12-slim` is Debian "trixie", whose repos dropped JDK 17 packages, so this uses 21 instead — still well above Timefold's documented 17+ minimum) and runs `start.sh`, which seeds the DB (safe/idempotent on every boot) before starting uvicorn.
 
 1. New Web Service on Render, pointed at the `server/` directory, runtime **Docker**.
 2. Set the env vars from [Environment Variables](#environment-variables) above in the Render dashboard — at minimum override `JWT_SECRET` and `ADMIN_PASSWORD`.
@@ -420,4 +420,5 @@ AERODATABOX_API_KEY=                  # only needed if FLIGHT_DATA_PROVIDER=aero
 | `403` on a staff page/endpoint | Expected — staff-only endpoints (`/{staff_id}/tasks`, `/{staff_id}/roster`) only allow viewing your own data unless logged in as admin |
 | `sqlite3.OperationalError: database is locked` | Restart the server — `database.py` sets WAL mode + a 30s busy_timeout on connect, which only applies to new connections |
 | Netlify shows "Page not found" on any route but `/` | Confirm `client/public/_redirects` exists and made it into `dist/` after build |
-| Render build/boot fails around JAVA_HOME | Backend needs a JDK 17+ available in the container — see `server/Dockerfile`; check the build log for the actual install path if it differs from `/usr/lib/jvm/java-17-openjdk-amd64` |
+| Render build/boot fails around JAVA_HOME | Backend needs a JDK 17+ available in the container — see `server/Dockerfile`; check the build log for the actual install path if it differs from `/usr/lib/jvm/java-21-openjdk-amd64` |
+| `apt-get install openjdk-17-jre-headless` fails: "no installation candidate" | The base image's Debian release dropped JDK 17 packages — `Dockerfile` now installs `openjdk-21-jdk-headless` instead; if this recurs on a future base-image bump, check `apt-cache search openjdk` in the build log for the currently available version and update both the `apt-get install` line and `JAVA_HOME` path together |

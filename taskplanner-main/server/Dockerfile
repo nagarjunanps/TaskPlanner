@@ -1,12 +1,14 @@
 FROM python:3.12-slim
 
 # Timefold's solver runs on the JVM via JPype — needs a real JDK, which pip
-# alone can never provide. JDK 17+ is Timefold's documented minimum.
+# alone can never provide. JDK 17+ is Timefold's documented minimum; using 21
+# here because python:3.12-slim is Debian "trixie", whose repos only carry
+# JDK 21 packages (openjdk-17-jre-headless was dropped).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends openjdk-17-jre-headless \
+    && apt-get install -y --no-install-recommends openjdk-21-jdk-headless \
     && rm -rf /var/lib/apt/lists/*
 
-ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 ENV PATH="${JAVA_HOME}/bin:${PATH}"
 
 WORKDIR /app

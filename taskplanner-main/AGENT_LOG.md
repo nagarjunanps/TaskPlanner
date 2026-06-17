@@ -631,3 +631,15 @@ Cleared `flights`/`turnarounds`/`task_assignments` tables again so the next solv
 **Not verified locally:** Docker isn't available in this environment, so the Dockerfile/start.sh couldn't be build-tested end-to-end — only verified against known package facts (Timefold's JDK 17+ requirement, Debian's standard `openjdk-17-jre-headless` install path, start.sh's line endings, seed.py's idempotency). Flagged to user to report back the first Render build log if anything's off.
 
 **Status:** Netlify fix verified (file lands in `dist/`). Render setup written but pending the user's first actual deploy to confirm the JAVA_HOME path and full boot sequence work end-to-end.
+
+---
+
+## 2026-06-17 — Render Deploy Debugging: Root Directory + JDK Package Name
+
+**Issue 1 — `failed to solve: failed to read dockerfile: open Dockerfile: no such file or directory`.** Confirmed `server/Dockerfile` was correctly committed and pushed (checked the exact commit Render had cloned). Root cause was a Render service-config issue, not a repo issue: **Root Directory** wasn't set to `server`, so Render's build context was the repo root, where there's no top-level `Dockerfile`. User confirmed repo root layout via `git ls-tree` (`client/`, `server/` as direct top-level dirs) — instructed to set Root Directory to exactly `server`, and to choose **Docker** as the runtime/language (not Python — Render's native Python buildpack has no way to install a JDK, which Timefold needs; it would build fine but crash on boot with a JVM-not-found error).
+
+**Issue 2 — `Package 'openjdk-17-jre-headless' has no installation candidate`.** With Root Directory fixed, the build reached the JDK install step and failed: `python:3.12-slim`'s current base image is Debian "trixie" (Debian 13), whose apt repos dropped `openjdk-17-jre-headless` — only `openjdk-21-jre`/`openjdk-21-jdk-headless` are available (apt's own error output suggested these as replacements).
+
+**Fix — `server/Dockerfile`:** switched to `openjdk-21-jdk-headless` and updated `JAVA_HOME` to `/usr/lib/jvm/java-21-openjdk-amd64` to match. Still satisfies Timefold's documented JDK 17+ minimum — just a higher version than originally planned, forced by the base image's current Debian release. Updated `README.md`'s Deployment section and Common Issues table to match, and noted in both that a future base-image bump could shift the available JDK version again (check `apt-cache search openjdk` in the build log if it recurs).
+
+**Status:** Dockerfile fix made; pending user's next Render deploy to confirm the JDK 21 install + JAVA_HOME path work end-to-end.
