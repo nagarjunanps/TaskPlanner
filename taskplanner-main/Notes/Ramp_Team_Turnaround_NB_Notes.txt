@@ -1,0 +1,145 @@
+AirAsia – GTR (Ground Team Red) Ramp Operations Workflow Automation Context
+ 
+Context & Objective The Ramp Ops Team meeting reviewed current ground‑handling operations for AirAsia flights at KLIA T2, with the objective of:
+ 
+Reducing manual work and human errors Minimising delays caused by frequent flight changes Automating flight updates, manpower planning, and communication Improving overall operational efficiency, accuracy, and responsiveness
+ 
+The goal is to shift from a manual, reactive process to a system‑driven, near‑real‑time workflow.
+ 
+Scale, Performance & Operational Pressure
+ 
+Daily flight volume: ~255–256 AirAsia turnaround flights per day (around 570 flights including both Arrival & Departures) On‑time performance (OTP):
+ 
+Best months: ~98.9% without any delay Worst months: can fall to ~77%
+ 
+Change intensity:
+ 
+~70–80% of daily AirAsia flights experience schedule, bay, or timing changes Many changes occur close to departure time, sometimes within minutes
+ 
+ 
+Turnaround constraints:
+ 
+A320: ~30 minutes (Narrow body) A321: ~35 minutes (Narrow body) A330: ~1 hour 45 minutes (Wide body)
+ 
+Extremely tight turnaround windows create high workload, stress, and limited recovery time if errors occur.
+ 
+ 
+Current Manual Workflow & Data Flow 3.1 Source Data
+ 
+Red Watch application (AirAsia):
+ 
+Daily flight schedule published in AirAsia Redwatch application after 03:00 AM once bays are confirmed Includes STD, ETD, bay, cargo weight
+ 
+Structured AirAsia emails & CSV files:
+ 
+Continuous flight change notifications throughout the day (every few minutes) from AirAsia to GTR team via emails
+ 
+ 
+3.2 Manual Processing
+ 
+Allocators from command center:
+ 
+Manually download schedules Copy/paste flight data into internal movement and rostering spreadsheets Sheets have no formulas or automation Visual indicators are applied using manual color coding
+ 
+ 
+3.3 Communication Method
+ 
+Flight and manpower changes shared via WhatsApp, Work vivo
+ 
+100+ WhatsApp groups in use and phone device is too small to accomodate the screenshots posted by the team as part of flight updates Updates sent as screenshots or image clippings of Excel sheets
+ 
+ 
+This creates:
+ 
+Information overload Version mismatches High risk of missed or misinterpreted updates
+ 
+ 
+3.4 Continuous Monitoring Requirement
+ 
+Someone must constantly monitor inboxes for flight changes Last‑minute changes often occur after teams have already prepared Bay changes are especially disruptive when not communicated instantly
+ 
+ 
+Workforce Composition, Roles & Rostering 4.1 Workforce Mix
+ 
+Permanent local GTR staff Vendor / contractor staff (recently onboarded)
+ 
+Require guidance from local staff Have credentialing and system‑access limitations
+ 
+ 
+4.2 Key Roles
+ 
+DTM (Duty Terminal Manager): Overall command‑center control RLS (Ramp Loading Supervisor): Highest authority below wing Ramp Loaders or Ramp agents (usually teams of 3 referred as 1 Set) Drivers (GSE operators)
+ 
+BLM = Driven TBL = Towed
+ 
+Pushback Operator Headset / VDGS Operator Runners / Support staff
+ 
+4.3 Standard Team Composition (per flight)
+ 
+1 RLS 1 Driver (arrives ~T‑15 mins) 1 Loader team (3 loaders or ramp agents) 1 Tower
+ 
+4.4 Assignment Rules
+ 
+Cargo < 1.5 tons → 1 team Cargo > 1.5 tons or dual‑hold loading → 2 teams Heavy sectors (up to ~10–10.9 tons) → 3 teams The Wide body (A330) operators cannot be assigned to Narrow body (A320, A321) as operating for A330 requires high end machine handling and hence work force cannot be mixed.
+ 
+Turnaround logic:
+ 
+Ground time > 45 min → separate arrival & departure teams Ground time ≤ 45 min → same team handles full turnaround
+ 
+ 
+4.5 Rostering & Shifts
+ 
+Multiple shift patterns:
+ 
+05:00–15:00 11:00–23:00 14:30–00:30 23:00–11:00
+ 
+ 
+Rosters managed manually via annual / weekly Excel sheets Adjustments made constantly due to flight changes or delayed flights
+4.6
+user journey
+Entire team will be onsite T-15 before the Arrival flight lands, they will do initial prep activity
+Once flight arrives
+Loader will keep on chocks
+VDGS or manual marshalling will be done by the Ramp agents
+PLB bridge will be connected by the Airport authority staff (not done by Ramp ops team), RLS to note down the time
+Arrival unloading starts, loaders will unload the Arrival bags and driver will tow them to the baggage belt area
+Cargo unloading happens in parallel with baggage unloading and cargo will be taken to the warehouse
+The departure process will start once all unloading is done
+Baggage and Cargo loading start as part of departure flight
+The Airasia staff will be monitoring the entire process and they will verify if all the activities are completed
+RLS will be overseeing the entire ops on ground.
+once all the process is completed, RLS will get signature from captain.
+Then pushback of the flight happens.
+Flight is ready to take off.
+ 
+Operational Rules & Procedures
+ 
+Teams must be ready 15 minutes before arrival for group prep VDGS and equipment must be set before aircraft arrival
+ 
+If RLS is unavailable, runners operate VDGS or use manual marshalling
+ 
+ 
+Color coding used on spreadsheets:
+ 
+A / B / STD / ETD changes Orange for special requests (e.g., two‑door boarding)
+ 
+ 
+Passenger Boarding Bridge (PBB):
+ 
+Normally 1 bridge For short turnarounds (< 1 hour, often 30–40 mins), two bridges used
+ 
+ 
+ 
+Key Pain Points & Failure Modes
+ 
+Manual copy‑paste causes latency and frequent human errors Color‑based interpretation is subjective and error‑prone WhatsApp communication:
+ 
+Too noisy Easy to miss updates Screenshots increase risk of misreading data
+ 
+ 
+Vendor staff:
+ 
+Lack system IDs and email integration Not fully visible in rostering tools
+ 
+ 
+Manual rostering cannot keep up with the speed and frequency of changes Screenshots of Excel sheets in WhatsApp create high operational risk Staffing optimisation based on real‑time flight changes is nearly impossible manually Dynamic allocation of staff is not possible. If the staff goes on medical leave, the rostering has to be corrected at the last moment or the team will work without that person Not able to monitor the staff has actually reported to the location. DTM from command center cannot concentrate on the problematic flight instead DTM is checking on all the flights. Productivity of the staff is not monitored.

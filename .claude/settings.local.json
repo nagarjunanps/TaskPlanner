@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from routers.rosters import router; print\\('rosters.py OK'\\)\")",
+      "Bash(.\\\\venv\\\\Scripts\\\\python.exe -c \"from routers.rosters import router; print\\('routers.py OK'\\)\")",
+      "Bash(curl -s \"http://localhost:8000/api/health\")",
+      "Bash(python -c ' *)",
+      "Bash(curl -s \"http://localhost:8000/api/flights/turnarounds?date=2026-06-17\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8000/api/task-planner/assignments?date=2026-06-17)",
+      "Bash(netstat -ano)",
+      "Bash(python -c \"import ast; [ast.parse\\(open\\(f\\).read\\(\\)\\) for f in ['routers/task_planner.py','solver/task_solver_manager.py']]\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('routers/task_planner.py'\\).read\\(\\)\\); ast.parse\\(open\\('models/schemas.py'\\).read\\(\\)\\)\")",
+      "Bash(npx tsc *)",
+      "Bash(./node_modules/.bin/vite build *)",
+      "Bash(cat requirements.txt)",
+      "Bash(cat ../.gitignore)",
+      "Bash(cat .gitignore)",
+      "Bash(./venv/Scripts/python.exe -c \"import jpype; print\\('JPype version:', jpype.__version__\\)\")",
+      "Bash(java -version)",
+      "Bash(./venv/Scripts/python.exe -m pip show JPype1 timefold)",
+      "Bash(docker *)",
+      "PowerShell(Get-Command *)"
+    ]
+  }
+}

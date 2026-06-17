@@ -1,0 +1,274 @@
+Ramp Operations – Wide Body (WB) Flight Flow 
+
+(AirAsia GTR Context) 
+
+Wide Body (WB) ramp operations follow a specialized and structured workflow distinct from Narrow Body (NB) operations. While the overall turnaround concept remains similar, WB handling requires certified manpower, specialized heavy equipment, making it a separate operational stream within Ramp Operations. 
+
+All personnel assigned to WB flights are wide body–certified based on the Foreign Carriers (FOCA) requirement and not interchangeable with NB teams, due to equipment complexity and operational requirements. The total ramp ops processing should be completed with in one hour for the WB turnaround flight.  
+
+ 
+
+1. WB Team Composition & Skill Requirements 
+
+Each WB flight is handled by a dedicated and certified team, comprising: 
+
+Role 
+
+Responsibility 
+
+Duty Manager (DM) 
+
+Overall operational oversight 
+
+Ramp Loading Supervisor (RLS) 
+
+Load control, compliance, and supervision 
+
+Driver (GSE Operator) 
+
+Baggage/container towing 
+
+Loader 
+
+Aircraft-side loading and unloading 
+
+JCPL Operator 
+
+Container loader operation 
+
+Key Characteristics 
+
+All personnel must hold WB operational certification 
+
+Each FOCA has different set of compliance rules. Staff must pass the required tests to obtain clearance for handling WB flights. 
+
+Trained to operate:  
+
+Container loaders 
+
+Heavy tow tractors 
+
+WB-specific ground support equipment 
+
+No workforce sharing with Narrow Body operations 
+
+ 
+
+ 
+
+2. Equipment & Operational Differences (WB vs NB) 
+
+2.1 WB-Specific Equipment 
+
+WB operations require heavier and specialized Ground Support Equipment (GSE), including: 
+
+Container loaders (operated by JCPL) 
+
+Heavy-duty tow tractors 
+
+WB-compatible baggage and cargo handling systems 
+
+2.2 Pushback Operations 
+
+Pushback is required for both NB and WB flights 
+
+WB pushback uses heavy-duty, aircraft-specific tow equipment 
+
+Equipment differs significantly due to aircraft weight and size 
+
+2.3 Cargo Door Access – Structural Difference 
+
+NB Operations  
+
+Cargo doors accessible directly from ground level 
+
+WB Operations  
+
+Cargo doors not reachable from ground 
+
+Passenger Steps (PAX steps) are mandatory for:  
+
+Opening cargo doors 
+
+Closing cargo doors 
+ 
+
+3. Additional Arrival Data Inputs (WB-Specific) 
+
+Wide Body arrivals receive additional documentation from the origin station (X station): 
+
+LDM – Load Message 
+
+CPM – Container / Pallet Message 
+
+These documents are used for: 
+
+Load distribution validation 
+
+Container position verification 
+
+Arrival handling coordination 
+
+ 
+
+4. WB Arrival Flight Process 
+
+4.1 Pre-Arrival Preparation 
+
+Entire WB team reports T–15 minutes along with the required equipment 
+
+GSE positioned and safety-checked 
+
+Operational readiness confirmed by RLS 
+
+4.2 Aircraft Arrival & Securing 
+
+Aircraft lands and parks at assigned bay 
+
+Wheel chocks placed by loaders 
+
+Aircraft alignment via:  
+
+VDGS, or 
+
+Manual marshalling (if required) 
+
+4.3 Cargo Door Access 
+
+WB cargo doors are not ground-accessible 
+
+PAX steps are positioned for:  
+
+Cargo door opening 
+
+Mandatory step before unloading 
+
+4.4 Passenger Bridge Connection 
+
+Passenger Boarding Bridge (PBB):  
+
+Connected by airport authority staff 
+
+Not handled by ramp team. RLS will document the timing of the PLB docking and retracted time. 
+
+In case of faster operations, upon requesting airline, two PLB can be connected. 
+
+4.5 Arrival Data Verification 
+
+RLS verifies:  
+
+LDM 
+
+CPM 
+
+ 
+
+Ensures alignment between:  
+
+Actual aircraft load 
+
+Planned container configuration 
+
+Ground handling sequence 
+
+4.6 Unloading Operations 
+
+Passenger baggage unloading begins 
+
+Driver transports baggage to baggage belt 
+
+Cargo unloading conducted in parallel:  
+
+Containers handled using JCPL equipment 
+
+Cargo transported to warehouse for processing (Bay to staging area and then finally towed to Warehouse) 
+
+ 
+
+5. WB Departure Flight Process 
+
+Departure activities begin only after complete unloading and turnaround clearance. 
+
+5.1 Load Plan Preparation 
+
+AirAsia Load Control prepares official load plan 
+
+Based on:  
+
+Available baggage containers 
+
+Cargo containers 
+
+Load plan requires Captain’s signed approval 
+
+For FOCA / other airlines:  
+
+Load plans received from the external sources (e.g., FM Altea & Sabre system) 
+
+5.2 Load Execution Supervision 
+
+RLS supervises aircraft-side loading 
+
+Ensures:  
+
+Approved sequencing 
+
+Structural compliance 
+
+Safety adherence 
+
+5.3 Container Movement & Loading 
+
+Driver tows containers to aircraft 
+
+JCPL operates container loaders 
+
+Loader positions containers into correct compartments 
+
+5.4 Cargo Door Access for Loading 
+
+PAX steps used again due to cargo door height 
+
+Required for door opening and closing during loading 
+
+5.5 Completion & Verification 
+
+All loading verified by AirAsia staff 
+
+RLS confirms:  
+
+Full load plan compliance 
+
+Operational safety clearance 
+
+5.6 Captain Sign-Off 
+
+Final load confirmation and approval obtained 
+
+Mandatory before pushback clearance 
+
+5.7 Pushback & Departure 
+
+Pushback performed using WB-specific heavy pushback equipment 
+
+Aircraft cleared for departure 
+
+Flight proceeds to take-off 
+
+ 
+
+6. Key Summary – WB Operational Characteristics 
+
+Dedicated WB-certified workforce only 
+
+Uses heavy-duty and specialized GSE 
+
+Cargo handling is container-based, not bulk 
+
+PAX steps required for cargo door access 
+
+Receives LDM & CPM from origin station 
+
+Strict load plan compliance with Captain approval 
+
+Pushback uses different equipment than NB operations 

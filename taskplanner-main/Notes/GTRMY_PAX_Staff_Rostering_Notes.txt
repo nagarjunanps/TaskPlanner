@@ -1,0 +1,174 @@
+24-Apr-26
+
+Staff rostering Ramp Notes
+
+Guest Servcies PAX Notes - By Zul
+
+Counter and gate rostering
+Counter - Straight forward - assignment
+
+Counter
+Station head
+Duty Manager
+Guest service officer
+Guest Service Assistant
+
+checkin area
+Automated checkn area
+assisted checkin
+OBB
+Oversize baggage (OG) upto entrance -
+
+GSA - 50 to 55 officers
+shift timings - 2AM, 3AM, 5AM - AM1, AM2, AM3
+10 hrs duty
+Aft - 11AM, 12PM, 2PM, 4.30PM
+10 hrs 
+
+each shift AM or PM
+2 or 3 DM
+5 to 6 GSO
+50 to 55 GSA
+
+4 days work, 2 days off and keeps on rotating
+
+every 3 hrs duty will be rotated based on passenger flow
+
+this rotation is decided by GSO - PIC on floor.
+Based on the passgener movement and congestion at counters expected, GSO will assign the people accordinlgy
+
+Roster Plan prep
+
+D-1 plan prep
+D - Start of the shift 3 hrs before the planned time
+
+absence should be informed 4 hrs before for planning
+
+Pain point
+
+Gate area is painful in assignment & Counter side is easy
+
+
+checkin checkout - Shift reporting time, flight assignment - PITSTOP, TATS system for flight assignment
+
+Rostering officer will monitor the attendance and then go for task assignment in the GTR Staff rostering system
+
+--why we are not using the system
+
+pain points
+
+--max worth system 
+--30 seconds lag
+--AIMS system for airline - only for Airasia - redwatch
+--manual for rest of the Airlines
+
+
+GATE ASSIGNMENT
+
+Probelm statement - applicable to All
+
+Flight delay while working
+if the ciurrent flight is delayed for DM officer A, but the DM  officer A has to go for the other flight. Then system has to auto assign some available DM to the next flight of the DM officer A
+
+
+Incoming flight delay - 
+DM will need to proceed for flight 2, then new DM has to be assigned for the delayted flight
+
+
+Gate assignmetn by sectors
+
+4 sectors
+
+J - J1 to J24
+LK - L1 to K22
+P - P1 to P16
+Q - Q1 to Q16
+
+each sectors = J, LK - 5 to 6 officers (GSO)
+each sectors = P, Q - 5 to 6 officers (GSO)
+
+each sector details
+
+1 GSO
+2 Runners or 3 sometimes 4 - (for both Departure & ARR) - GSA
+each gate - 2 staffs both are GSA - Gate controller & coordinator
+
+if any issues, support staff or runners will pitch in
+
+example - 
+
+two flights - gate open 60 mins before for both demoestic and international
+for WB - gate open 90 mins before
+
+Staff 2 people will be there -> Flight 1 - 6AM - GO - 5AM -> One officer will stay and the other offcier will go and open flight 2
+Staff 2 - Fliught 2 - 7AM - gate open - 6AM
+
+no specific breaks
+in 10 hrs 7 to 8 flights
+
+distance between the gates, connecting flight in between
+
+Team A - 4 days morning, next 2 days off, next 4 days afternoon shift, 
+TEAm B - 
+
+all team will be rotated for every 4 days
+
+Am1- counter, AM2-gate, AM3-gate, AM3 boarding
+
+Team A,B,C,D rostering comes into picture - 
+
+person shuffled from team A to team B - Minimum resting period will be assigned by Rostering person
+team shuffling happens
+
+each team - 12 officers - 4 gate, 4 counter, 1 transfer counter (min requird)
+
+gate rostering pain points
+1. require entire sysstem automation as the rostering officer may make some error
+2. many factors has to be factored in, the distance between gates, flight bay changes, scheduled time and ATA change, delay times of flight, available resources
+3. Notifications for the staff - if the shift plan changes too early or delayed
+4. unified dashboard as per the screenshots
+
+5. Device usage - 
+6. No last minute notifcation to teh users
+7. attendance and overtime to be handled in one application
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

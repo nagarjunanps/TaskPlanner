@@ -1,0 +1,46 @@
+# ── Python / Server ───────────────────────────────────────────────────────────
+server/venv/
+server/__pycache__/
+server/**/__pycache__/
+server/**/*.pyc
+server/**/*.pyo
+server/*.db
+server/*.db-shm
+server/*.db-wal
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Node / Client ─────────────────────────────────────────────────────────────
+node_modules/
+client/node_modules/
+client/dist/
+client/.vite/
+*.local
+
+# ── Environment & Secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# ── IDE & OS ──────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Claude Code ──────────────────────────────────────────────────────────────
+.claude/

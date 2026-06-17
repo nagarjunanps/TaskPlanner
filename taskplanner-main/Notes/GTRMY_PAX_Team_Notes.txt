@@ -1,0 +1,107 @@
+Meeting Transcript (Organized Version)
+ 
+1. Counter Segregation
+- Counters are divided by domestic vs. international flights, not by individual flight sectors.
+- Domestic flights: Counters S and T.
+- International flights: Counters U through Y.
+- This segregation is displayed on a giant screen for passengers.
+- Example:
+- Domestic passenger → Check-in at S/T.
+- International passenger → Check-in at U–Y.
+ 
+---
+ 
+2. Rostering and Deployment
+- Operations are generally easier compared to rostering and planning, which are more complex.
+- Ramp operations also face challenges in rostering.
+- Current system in use: GES (staff allocation system).
+- Staff perform operations via the application.
+ 
+---
+ 
+3. Online Check-in Process
+- Online check-in is enforced for Asia flights.
+- Current online check-in rate: 70–80%.
+- Process:
+- Notification sent 14 days before flight.
+- Online check-in available until 1 hour before departure.
+- Counters also close 1 hour before departure.
+- Charges:
+- Self check-in: Free.
+- Assisted check-in: 30 Ringgit per passenger (boarding pass fee).
+- Passenger behavior:
+- Some passengers still prefer assisted check-in despite the fee.
+- Types of counters:
+- Baggage drop counters.
+- Assisted check-in counters.
+ 
+---
+ 
+4. Staffing at Check-in Pillars
+- Airlines require staff presence at four pillars (main congestion points).
+- Four staff members are deployed at each pillar.
+- Purpose:
+- Manage congestion.
+- Assist passengers unfamiliar with self check-in.
+- Intervention only when passengers cannot self check-in.
+- Frequent flyers usually manage independently.
+ 
+---
+ 
+5. Baggage Tagging
+- Passengers can print baggage tags during self check-in.
+- System allows printing up to 10 tags, even if fewer bags are checked in.
+- Comparison between tags printed at kiosks vs. open-back systems was mentioned (details to be shared separately).
+ 
+---
+ 
+6. Ground Operations & Shifts
+- Responsibilities include:
+- Counter operations.
+- Transfer desk operations (connections between origin, transit, and destination).
+- Gate operations.
+- Special handling passengers (wheelchair, visually impaired, etc.).
+- Shift structure:
+- Morning: 2 AM, 3 AM, 5 AM → until 12 PM.
+- Afternoon: 11 AM, 2 PM, 4:30 PM → transition until evening.
+- Rostering manager (Zul) will provide further details in a Friday session.
+ 
+---
+ 
+7. Interaction with Flight Crew
+- After process completion, checklists are handed over to the Captain.
+- Airlines (e.g., AirAsia Philippines, AirAsia Thailand) require individual trip records for each flight.
+- Compliance is critical for audits; failure results in NCR (Non-Compliance Report).
+ 
+---
+ 
+8. Counter Closure & Pre-Breakup
+- Counters close 1 hour before scheduled departure (STD).
+- Example: STD = 10:00 → Counters close at 9:00.
+- Pre-breakup figures sent to Flight Ops.
+- Final figures updated at the gate, accounting for no-shows.
+ 
+---
+ 
+9. No-Show Handling
+- No-shows identified 20 minutes before departure (morning flights) or 10 minutes before departure (later flights).
+- Process:
+- Initiate NX17 via Work Vivo platform.
+- Ramp team searches for baggage linked to no-show passengers.
+- Updates shared in system (similar to comment threads).
+- Systems used:
+- GoNow system for passenger and baggage data.
+- Boarding pass scanning (above wing).
+- Baggage tag scanning (ramp side).
+- Final reports include:
+- GD (General Declaration) for aircraft.
+- POB (Passengers on Board).
+- Baggage count.
+- All reported to Captain before departure.
+ 
+---
+ 
+✅ Final Notes
+- The transcript highlights segregation of counters, staff deployment challenges, online check-in enforcement, shift structures, and no-show baggage handling.
+- All details are presented exactly as stated, without assumptions.
+- Repetitions have been consolidated into structured points for clarity.
