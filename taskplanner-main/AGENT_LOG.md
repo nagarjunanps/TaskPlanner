@@ -498,3 +498,136 @@ Cleared `flights`/`turnarounds`/`task_assignments` tables again so the next solv
 Cleared `flights`/`turnarounds`/`task_assignments` tables again so the next solve reflects this fix.
 
 **Status:** Complete. Verified via standalone Python simulation of the boundary math (not a full solver run) against real shift times from the DB — see table above. `ast.parse` and a real module import (`routers.task_planner`) both pass. User still needs to restart `uvicorn`.
+
+---
+
+## 2026-06-17 — Full Codebase Audit + Server-Side Auth/RBAC Enforcement
+
+**Trigger:** User asked for an overall diagnostics pass to check coding standards and find improvement opportunities.
+
+**Audit findings (fork agent, read-only):** highest-severity finding — every API router only depended on `Depends(get_db)`, never a JWT-verifying dependency. The React-side `RequireAuth`/`RequireAdmin` guards in `App.tsx` only gate the router, not the API — any unauthenticated caller could hit admin-only endpoints (create/deactivate staff, publish rosters, edit task assignments, etc.) directly. Second finding: `FlightListPage.tsx`'s replan `setInterval` was never cleared on unmount, polling forever after navigation.
+
+**Fix — `routers/auth.py`:** added `get_current_user` (verifies the Bearer JWT) and `require_admin` (verifies + checks `is_admin`).
+
+**Fix — admin-only routers** (`org.py`, `teams.py`, `shifts.py`, `rosters.py`, `attendance.py`, `overtime.py`, `solver.py`, `certifications.py`, `flights.py`, `task_planner.py`): added `dependencies=[Depends(require_admin)]` at the router level.
+
+**Fix — `routers/staff.py`** (mixed access): kept `list_staff`/`create_staff`/`update_staff`/`deactivate_staff` admin-only per-route; `GET /{staff_id}/tasks` and `GET /{staff_id}/roster` (used by the staff-only `/my-tasks` and `/my-shift` pages) now require a valid token plus a new `_require_self_or_admin` check — a staff member can only view their own data, admins can view anyone's.
+
+**Fix — `FlightListPage.tsx`:** replan poll interval now lives in a `pollRef`, cleared on a second replan click, clears itself once the job leaves `SOLVING`, and is cleaned up via a `useEffect` return on unmount.
+
+**Verified:** app imports cleanly with all 51 routes after the dependency wiring; `vite build` clean.
+
+**Status:** Complete.
+
+---
+
+## 2026-06-17 — Certification Pool Fix, RLS Flexibility Constraints, Multi-Set Driver Requirement (H-T7)
+
+**Investigation:** user asked why staff sit idle before shift end despite many unassigned slots. Queried `gtrmy.db` directly: DRIVER slots were 56% unassigned, TOWER 34%, vs. only 12% for LOADER and 1% for RLS. Root cause: `seed.py` only granted `GSE_DRIVING`/`TOWER_OPS` certs to 6 of 40 RAs per team (~5 usable after expiry variation) — far too few to cover overlapping turnarounds, while the other ~34 RAs per team were certification-ineligible regardless of how idle they were.
+
+**Fix — `seed.py`:** raised certified pool from 6→16 RAs per team for both `GSE_DRIVING` and `TOWER_OPS` (still keeping one EXPIRING_SOON and one EXPIRED per cert for demo variety). Requires `gtrmy.db` delete + reseed to take effect.
+
+**New constraint — H-T7 (`task_constraints.py::multi_set_turnaround_needs_driver`):** a turnaround with `required_sets > 1` (multiple loader sets) must have at least one DRIVER assigned somewhere across its sets — hard constraint, since running multiple loader sets with zero driver isn't operationally viable, unlike an individual unfilled DRIVER slot which is just a soft (S-T1) concern.
+
+**RLS scheduling flexibility** (per `Notes/GTRMY_Ramp_Staff_Rostering_Notes.txt` — RLS routinely starts late or runs short-staffed in real ops):
+- `_prep_buffer_minutes(role)` — RLS's work window opens at STA itself (no 15-min pre-arrival buffer other roles need). Applied in `no_double_booking` (H-T5) and `enforce_travel_gap` (S-T4).
+- `_travel_minutes(...)` halves the required gap when the upcoming slot is RLS.
+- New **S-T6** soft constraint: unassigned RLS slots penalised at weight 3 instead of the standard weight-10 (S-T1); S-T1 now excludes RLS entirely.
+
+**Verified** with a live synthetic solve (2 turnarounds, 5 staff incl. 1 RLS): 0 hard violations, multi-set turnaround correctly got a driver, RLS scheduled back-to-back across two turnarounds with a gap other roles couldn't use.
+
+**Status:** Complete.
+
+---
+
+## 2026-06-17 — Pooled Overlap-Window Solve-All Redesign
+
+**Reported:** unassigned-slot rate was highest right at shift-boundary hours (11:00, 23:00) rather than mid-shift, contrary to user's expectation. Verified by bucketing DRIVER/TOWER demand vs. unassigned count by hour against real data — confirmed 11:00/23:00 were among the worst, while several mid-shift hours were fully staffed (0% unassigned). Root cause: the existing overlap-handling (added in the 2026-06-17 "Shift Handoff Window-Sharing Fix" entry above) split a shared overlap window 50/50 by *time* between the two on-duty teams — each team still only had its own (certification-scarce) staff to cover its half, even though both teams' staff were on duty simultaneously.
+
+**Fix — pool staff instead of splitting time:**
+- `solver/task_domain.py`: `TaskStaffFact` gained a `team_id` field.
+- `routers/task_planner.py::_build_plan_data`: new `extra_team_ids: list[int] | None` param — unions in on-duty, certified staff from those teams alongside the primary team's own.
+- `routers/task_planner.py::_persist_assignments`: now attributes each assignment to the *assigned staff's own* `team_id` (falling back to the job's nominal team only when unassigned), since a pooled job's staff may belong to either team.
+- `routers/task_planner.py::start_all_teams_solver`: Phase 2 now carves the overlap **entirely out** of both teams' exclusive windows (instead of splitting it at the midpoint) and queues a separate joint job per overlapping pair, solved with both teams' staff pooled via `extra_team_ids`.
+- `models/schemas.py`: `TaskSolverStatusOut` gained `pooled_with_team_id` so the API reports which jobs are joint pooled-staff solves.
+- `client/src/api/types.ts`, `TaskPlannerPage.tsx`: pooled jobs now render as `T2+T3` with a "pooled" badge instead of a confusing duplicate-looking card.
+
+**Verified** end-to-end against real data: the T2/T3 overlap window (11:00–15:00, 17 turnarounds, 158 slots) went from each team alone covering half, to both teams' staff pooled — 0 hard violations, only 1/158 unassigned, with staff from both teams actually picking up work in the shared window.
+
+**Status:** Complete.
+
+---
+
+## 2026-06-17 — SQLite Lock Contention Fix (WAL + Bulk Upsert)
+
+**Reported:** `solve-all` consistently threw `sqlite3.OperationalError: database is locked`, always on the same team (T2).
+
+**Root cause #1 — no WAL / thin busy_timeout:** `database.py`'s engine used SQLite's default `delete` journal mode with only a 5s busy_timeout. Confirmed via `PRAGMA journal_mode`/`PRAGMA busy_timeout` on the live DB file.
+
+**Fix:** added a `connect` event listener on `engine.sync_engine` setting `PRAGMA journal_mode=WAL` and `PRAGMA busy_timeout=30000`. Verified via `engine.begin()` that both pragmas take effect through the app's actual async engine, and stress-tested 10 concurrent writers with zero lock errors (vs. failing before the fix).
+
+**Root cause #2 (the one actually still causing locks after the WAL fix) — long-held write transactions:** `_persist_assignments` looped one `execute()` per solved slot (a job can have 150–900+ slots) before a single final commit. With `solve-all` now launching ~11 concurrent jobs (6 teams' exclusive windows + ~5 pooled-overlap jobs, per the redesign above), each holding the write lock for several seconds, the cumulative queueing time for an unlucky job exceeded even the 30s busy_timeout. T2 being involved in two jobs (its own window + the T2/T3 pooled overlap) made it more likely to be the one queued behind others.
+
+**Fix — `_persist_assignments`:** replaced the per-slot loop with a single multi-row upsert (`sqlite_insert(TaskAssignment).values(rows)` + `on_conflict_do_update` using `stmt.excluded.*`), cutting lock-hold time from seconds to milliseconds. Verified against the real DB: 158 rows persisted correctly in one statement.
+
+**Status:** Complete. User confirmed no further lock errors after restarting with both fixes applied.
+
+---
+
+## 2026-06-17 — Overtime Constraints: Minimum Rest Period (H9/H9b) + DM-Only Approval (H8)
+
+**Reported:** `overtime.py` had no real eligibility constraints — any active staff member could be signed up for OT regardless of their roster status that day.
+
+**First pass (superseded by the rest-period correction below):** added checks blocking OT signup when a staff member was marked MC/EL, or already on a 12h shift (S2/S4) that day — reasoning a 10h shift (S1/S3) left 2h of headroom under the documented 12h daily cap (`Notes/GTRMY_Ramp_Staff_Rostering_Notes.txt`: "if associate work 10 hrs ... only 2 hrs can be done as OT").
+
+**Correction:** user pointed out this still allowed same-day-shift OT, which doesn't satisfy the notes' separate minimum-rest requirement before OT can start. Replaced with:
+- **H9:** any ON_DUTY roster entry on the requested date blocks OT signup outright — there's no way to fit a rest break in if you're already working that day.
+- **H9b:** also checks the *previous* day's shift, since overnight shifts (e.g. S4, 23:00–11:00) are recorded under their start date and wouldn't otherwise show up as "today." Computes rest hours until midnight of the OT date from `shift.start_time + shift.duration_hours`; blocks if under `MIN_REST_HOURS = 10`.
+- **H8 (was previously unenforced despite the UI labelling it):** `approve_volunteer` now verifies `approver_id` resolves to an active staff member with role `DM` — previously any integer was accepted with zero validation.
+- Both `approve`/`reject` now reject acting on a record that isn't `PENDING` (no double-approving/rejecting).
+
+**Verified** against real seeded data: a staff member rostered ON_DUTY today was correctly rejected with the rest-hours message; a genuinely off-duty staff member was correctly accepted.
+
+**Status:** Complete.
+
+---
+
+## 2026-06-17 — Task Planner UI: Performance Fix + Professional Color Palette
+
+**Reported:** the page "felt stuck," loaders weren't smooth, flight details looked bland, and (after a first colorful pass) the palette looked unprofessional for a business app.
+
+**Performance root cause:** a 200ms `setInterval` ticking the "generation time" display called `setState` directly on the page component, re-rendering the *entire* page — including every turnaround card and its role-slot `<select>` elements — five times a second, stacked on top of the existing 1s job-status poll doing the same.
+
+**Fix:**
+- Extracted the ticking clock into its own `GenerationTimer` component with local state (ticks at 1s now, not 200ms) — only re-renders itself, not the page.
+- Wrapped `TurnaroundCard`/`TeamStatusCard` in `React.memo`; stabilised their callback props (`onUpdateTA`, `onReassign`) via `useCallback` so unrelated state changes (the poll) no longer force-rerender cards whose data hasn't changed.
+
+**Visual pass 1 (colorful):** added colored flight-detail pills (ARR/DEP/ground-time/bay/cargo), livelier role-slot colors, gradient header/buttons. Also fixed a latent bug found along the way: the aircraft-type badge read `ta.aircraft_type`, a field that doesn't exist on `Turnaround` (always silently fell back to "A320") — now correctly reads from `arr`/`dep` flight records.
+
+**Visual pass 2 (professional, per feedback):** consolidated the rainbow of fuchsia/teal/sky/violet/orange down to one brand color (indigo/blue) + neutral slate, with color reserved only for real status meaning (filled/unfilled, ground-time urgency, success/warning/error) rather than decoration. Flight-detail chips became neutral slate outline chips with a small colored icon accent instead of solid colorful fills.
+
+**Status:** Complete. `vite build` and `tsc` checked clean both passes (one pre-existing, unrelated type error — the aircraft_type bug above — incidentally fixed as a side effect).
+
+---
+
+## 2026-06-17 — Deployment: Netlify SPA Routing Fix + Render Dockerfile for Backend
+
+**Reported:** deploying the client to Netlify gave a "Page not found" 404 on direct route navigation/refresh.
+
+**Cause:** the client uses React Router's `BrowserRouter` (client-side routing); Netlify's static host only serves actual files, so any path other than `/` 404s without an explicit fallback rule.
+
+**Fix:** added `client/public/_redirects` (`/* /index.html 200`) — Vite copies `public/` into `dist/` verbatim, and Netlify auto-applies this convention file. Verified it lands in `dist/` after build.
+
+**Separate, bigger issue surfaced:** Netlify can only ever serve the static client — it cannot run the Python/FastAPI/Timefold backend at all (confirmed: Timefold needs JPype which needs a real JVM, plus a persistent SQLite file; Netlify has neither). User confirmed they'd uploaded the whole project expecting Netlify to host both. Backend needs a separate host (Render chosen).
+
+**Backend deployment files added** (`server/`):
+- `Dockerfile` — `python:3.12-slim` base + `openjdk-17-jre-headless` (Timefold's documented JDK 17+ minimum, confirmed via package metadata) with `JAVA_HOME` set to Debian's standard install path; installs `requirements.txt`; runs `start.sh`.
+- `start.sh` — runs `python seed.py` (idempotent — every section checks for existing rows before inserting, never touches flights/turnarounds/assignments) before starting uvicorn, so a fresh deploy with no persistent disk comes up seeded instead of empty. Confirmed LF line endings (a Windows-authored shebang script with CRLF would break in the Linux container).
+- `.dockerignore` — excludes `venv/`, `__pycache__/`, `*.db`, `*.log`, `package.json` (a local-only dev convenience script) from the build context.
+- Also deleted a stray `hs_err_pid17840.log` (JVM crash log) that had accumulated in `server/`.
+
+**Documented but not yet automated:** env vars the app reads (`JWT_SECRET`, `ADMIN_EMPLOYEE_ID`, `ADMIN_PASSWORD`, `ADMIN_NAME`, `ANTHROPIC_API_KEY`, `AERODATABOX_API_KEY`, `FLIGHT_DATA_PROVIDER`, `SOLVER_TIME_LIMIT_SECONDS`) need to be set in Render's dashboard; client's `axios baseURL` and `main.py`'s CORS allowlist still need to point at each other's real deployed URLs once both are live (not yet done — pending the actual URLs existing).
+
+**Not verified locally:** Docker isn't available in this environment, so the Dockerfile/start.sh couldn't be build-tested end-to-end — only verified against known package facts (Timefold's JDK 17+ requirement, Debian's standard `openjdk-17-jre-headless` install path, start.sh's line endings, seed.py's idempotency). Flagged to user to report back the first Render build log if anything's off.
+
+**Status:** Netlify fix verified (file lands in `dist/`). Render setup written but pending the user's first actual deploy to confirm the JAVA_HOME path and full boot sequence work end-to-end.
