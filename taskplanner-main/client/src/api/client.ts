@@ -123,8 +123,8 @@ export const updateAttendance = (entry_id: number, data: Partial<RosterEntry>) =
 // ── Overtime ──────────────────────────────────────────────────────────────────
 export const getOTVolunteers = (date: string) =>
   api.get<OTVolunteer[]>('/overtime/volunteers', { params: { date } }).then(r => r.data)
-export const signupOT = (staff_id: number, date: string) =>
-  api.post<OTVolunteer>('/overtime/volunteers', { staff_id, date }).then(r => r.data)
+export const signupOT = (staff_id: number, shift_id: number, date: string) =>
+  api.post<OTVolunteer>('/overtime/volunteers', { staff_id, shift_id, date }).then(r => r.data)
 export const approveOT = (id: number, approver_id: number) =>
   api.put<OTVolunteer>(`/overtime/volunteers/${id}/approve`, null, { params: { approver_id } }).then(r => r.data)
 export const rejectOT = (id: number) =>
@@ -133,7 +133,7 @@ export const rejectOT = (id: number) =>
 // ── Flights / Turnarounds ─────────────────────────────────────────────────────
 export const getTurnarounds = (date: string, station = 'KUL') =>
   api.get<Turnaround[]>('/flights/turnarounds', { params: { date, station } }).then(r => r.data)
-export const updateTurnaround = (id: number, data: { cargo_weight_tons?: number | null; required_sets?: number }) =>
+export const updateTurnaround = (id: number, data: { cargo_weight_tons?: number | null; required_sets?: number; arrival_required_sets?: number; departure_required_sets?: number }) =>
   api.put<Turnaround>(`/flights/turnarounds/${id}`, data).then(r => r.data)
 export const getFlights = (date: string, station = 'KUL') =>
   api.get<Flight[]>('/flights', { params: { date, station } }).then(r => r.data)

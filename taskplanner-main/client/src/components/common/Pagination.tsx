@@ -34,9 +34,10 @@ interface Props {
   from:       number
   to:         number
   onPage:     (p: number) => void
+  dark?:      boolean
 }
 
-export default function Pagination({ page, totalPages, total, from, to, onPage }: Props) {
+export default function Pagination({ page, totalPages, total, from, to, onPage, dark = false }: Props) {
   if (totalPages <= 1) return null
 
   // Window of up to 5 page numbers centred on current page
@@ -52,41 +53,41 @@ export default function Pagination({ page, totalPages, total, from, to, onPage }
 
   return (
     <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-1 py-2">
-      <span className="text-xs text-slate-500 order-2 sm:order-1">
-        Showing <span className="font-medium text-slate-700">{from}–{to}</span> of{' '}
-        <span className="font-medium text-slate-700">{total}</span>
+      <span className={`text-xs order-2 sm:order-1 ${dark ? 'text-slate-400' : 'text-slate-500'}`}>
+        Showing <span className={`font-medium ${dark ? 'text-slate-200' : 'text-slate-700'}`}>{from}–{to}</span> of{' '}
+        <span className={`font-medium ${dark ? 'text-slate-200' : 'text-slate-700'}`}>{total}</span>
       </span>
 
       <div className="flex items-center gap-1 order-1 sm:order-2">
-        <NavBtn onClick={() => onPage(1)}          disabled={page === 1}          title="First page">
+        <NavBtn dark={dark} onClick={() => onPage(1)}          disabled={page === 1}          title="First page">
           <ChevronsLeft size={14} />
         </NavBtn>
-        <NavBtn onClick={() => onPage(page - 1)}   disabled={page === 1}          title="Previous">
+        <NavBtn dark={dark} onClick={() => onPage(page - 1)}   disabled={page === 1}          title="Previous">
           <ChevronLeft size={14} />
         </NavBtn>
 
         {start > 1 && (
           <>
-            <PageBtn n={1} current={page} onPage={onPage} />
-            {start > 2 && <span className="text-slate-400 text-xs px-1">…</span>}
+            <PageBtn dark={dark} n={1} current={page} onPage={onPage} />
+            {start > 2 && <span className={`text-xs px-1 ${dark ? 'text-slate-500' : 'text-slate-400'}`}>…</span>}
           </>
         )}
 
         {pageNums.map(n => (
-          <PageBtn key={n} n={n} current={page} onPage={onPage} />
+          <PageBtn key={n} dark={dark} n={n} current={page} onPage={onPage} />
         ))}
 
         {end < totalPages && (
           <>
-            {end < totalPages - 1 && <span className="text-slate-400 text-xs px-1">…</span>}
-            <PageBtn n={totalPages} current={page} onPage={onPage} />
+            {end < totalPages - 1 && <span className={`text-xs px-1 ${dark ? 'text-slate-500' : 'text-slate-400'}`}>…</span>}
+            <PageBtn dark={dark} n={totalPages} current={page} onPage={onPage} />
           </>
         )}
 
-        <NavBtn onClick={() => onPage(page + 1)}   disabled={page === totalPages} title="Next">
+        <NavBtn dark={dark} onClick={() => onPage(page + 1)}   disabled={page === totalPages} title="Next">
           <ChevronRight size={14} />
         </NavBtn>
-        <NavBtn onClick={() => onPage(totalPages)} disabled={page === totalPages} title="Last page">
+        <NavBtn dark={dark} onClick={() => onPage(totalPages)} disabled={page === totalPages} title="Last page">
           <ChevronsRight size={14} />
         </NavBtn>
       </div>
@@ -94,32 +95,34 @@ export default function Pagination({ page, totalPages, total, from, to, onPage }
   )
 }
 
-function NavBtn({ onClick, disabled, title, children }: {
-  onClick: () => void; disabled: boolean; title: string; children: React.ReactNode
+function NavBtn({ onClick, disabled, title, children, dark }: {
+  onClick: () => void; disabled: boolean; title: string; children: React.ReactNode; dark: boolean
 }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className="w-7 h-7 flex items-center justify-center rounded-lg border text-slate-500
-                 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed
-                 transition-colors text-xs"
+      className={`w-7 h-7 flex items-center justify-center rounded-lg border disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-xs ${
+        dark ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-200 text-slate-500 hover:bg-slate-100'
+      }`}
     >
       {children}
     </button>
   )
 }
 
-function PageBtn({ n, current, onPage }: { n: number; current: number; onPage: (p: number) => void }) {
+function PageBtn({ n, current, onPage, dark }: { n: number; current: number; onPage: (p: number) => void; dark: boolean }) {
   const active = n === current
   return (
     <button
       onClick={() => onPage(n)}
-      className={`w-7 h-7 flex items-center justify-center rounded-lg text-xs font-medium transition-colors
-        ${active
-          ? 'bg-indigo-600 text-white border border-indigo-600'
-          : 'border text-slate-600 hover:bg-slate-100'
+      className={`w-7 h-7 flex items-center justify-center rounded-lg text-xs font-medium transition-colors border ${
+        active
+          ? 'bg-indigo-600 text-white border-indigo-600'
+          : dark
+            ? 'border-slate-700 text-slate-300 hover:bg-slate-800'
+            : 'border-slate-200 text-slate-600 hover:bg-slate-100'
         }`}
     >
       {n}

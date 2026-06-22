@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Flight Timeline Mockup</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, Segoe UI, sans-serif; margin: 0; padding: 24px;
+    background: #0f1320; color: #e2e8f0;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; color: #f1f5f9; }
+  .sub { color: #94a3b8; font-size: 13px; margin-bottom: 16px; }
+
+  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 14px; }
+  .toolbar input, .toolbar select {
+    background: #1a2032; border: 1px solid #2d3548; color: #e2e8f0;
+    border-radius: 8px; padding: 7px 10px; font-size: 13px; outline: none;
+  }
+  .toolbar input:focus, .toolbar select:focus { border-color: #6366f1; }
+  .toggle-group { display: flex; background: #1a2032; border: 1px solid #2d3548; border-radius: 8px; overflow: hidden; }
+  .toggle-group button {
+    background: transparent; border: none; color: #94a3b8; padding: 7px 14px;
+    font-size: 13px; cursor: pointer;
+  }
+  .toggle-group button.active { background: #6366f1; color: white; }
+  .stat { font-size: 12px; color: #64748b; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 16px; font-size: 12px; color: #94a3b8; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+  .chart {
+    background: #151a2c; border: 1px solid #2d3548; border-radius: 10px;
+    overflow: auto; max-height: 640px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+  }
+  .grid {
+    position: relative;
+    display: grid;
+    grid-template-columns: 110px repeat(24, minmax(50px, 1fr));
+    min-width: 1400px;
+  }
+  .corner {
+    position: sticky; left: 0; top: 0; background: #1a2032; z-index: 4;
+    border-right: 1px solid #2d3548; border-bottom: 1px solid #2d3548;
+  }
+  .hour-head {
+    text-align: center; font-size: 11px; color: #94a3b8; padding: 9px 0;
+    border-bottom: 1px solid #2d3548; border-right: 1px solid #1e2438;
+    background: #1a2032; position: sticky; top: 0; z-index: 3;
+  }
+  .row-label {
+    position: sticky; left: 0; background: #151a2c; z-index: 2;
+    font-size: 12px; font-weight: 600; padding: 12px 10px; color: #cbd5e1;
+    border-right: 1px solid #2d3548; border-bottom: 1px solid #1e2438;
+    display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  }
+  .row-label small { font-weight: 400; color: #64748b; font-size: 10px; }
+  .row-bg {
+    border-bottom: 1px solid #1e2438; border-right: 1px solid #161b2c;
+    position: relative; height: 52px;
+  }
+  .row-bg:nth-child(odd) { background: rgba(255,255,255,0.012); }
+
+  .now-line { position: absolute; top: 0; bottom: 0; width: 2px; background: #f87171; z-index: 1; }
+  .now-tag {
+    position: absolute; top: -18px; left: -16px; font-size: 10px; color: #f87171; font-weight: 600;
+    background: #151a2c; padding: 0 3px;
+  }
+
+  .bar {
+    position: absolute; top: 7px; bottom: 7px; border-radius: 6px;
+    font-size: 11px; color: white; display: flex; align-items: center;
+    padding: 0 8px; overflow: hidden; white-space: nowrap;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+    cursor: pointer; border: 1px solid rgba(255,255,255,0.15);
+    transition: filter 0.1s, transform 0.1s;
+  }
+  .bar:hover { filter: brightness(1.18); z-index: 6; transform: translateY(-1px); }
+  .bar.arr  { background: #0ea5e9; }
+  .bar.dep  { background: #10b981; }
+  .bar.turn { background: linear-gradient(90deg, #0ea5e9 0 38%, #f59e0b 38% 58%, #10b981 58% 100%); }
+  .bar.conflict { outline: 2px solid #f87171; outline-offset: 1px; }
+
+  .conflict-badge {
+    position: absolute; top: -6px; right: -6px; width: 16px; height: 16px;
+    background: #ef4444; color: white; border-radius: 50%; font-size: 10px;
+    display: flex; align-items: center; justify-content: center; font-weight: 700;
+    border: 1px solid #151a2c;
+  }
+
+  .tooltip {
+    position: fixed; background: #1a2032; border: 1px solid #2d3548; color: #e2e8f0;
+    padding: 12px 14px; border-radius: 10px; font-size: 12px; line-height: 1.6;
+    pointer-events: none; z-index: 50; display: none; min-width: 230px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  }
+  .tooltip .tt-title { font-size: 13px; font-weight: 700; color: #f1f5f9; margin-bottom: 6px; display: flex; justify-content: space-between; gap: 8px;}
+  .tooltip .tt-row { display: flex; justify-content: space-between; gap: 16px; color: #94a3b8; }
+  .tooltip .tt-row b { color: #e2e8f0; font-weight: 500; }
+  .tooltip .tt-warn { margin-top: 8px; color: #fca5a5; font-weight: 600; }
+  .tooltip .tt-ok { margin-top: 8px; color: #6ee7b7; font-weight: 600; }
+  .tooltip hr { border: none; border-top: 1px solid #2d3548; margin: 8px 0; }
+</style>
+</head>
+<body>
+
+<h1>✈ Flight / Turnaround Timeline — 20 Jun 2026 (Sample)</h1>
+<div class="sub">Only bays/teams with activity are shown — empty rows are hidden, so ~100 bays collapses to whatever's actually in use that day.</div>
+
+<div class="toolbar">
+  <div class="toggle-group" id="groupToggle">
+    <button data-mode="bay" class="active">Group: Bay</button>
+    <button data-mode="team">Group: Team</button>
+  </div>
+  <input id="search" placeholder="Filter bay / team / flight no..." style="width:220px" />
+  <span class="stat" id="rowCount"></span>
+</div>
+
+<div class="legend">
+  <span><i class="swatch" style="background:#0ea5e9"></i> Arrival leg</span>
+  <span><i class="swatch" style="background:#10b981"></i> Departure leg</span>
+  <span><i class="swatch" style="background:linear-gradient(90deg,#0ea5e9,#f59e0b,#10b981)"></i> Turnaround (ground time)</span>
+  <span><i class="swatch" style="background:#ef4444;border-radius:50%"></i> Conflict flagged</span>
+</div>
+
+<div class="chart">
+  <div class="grid" id="grid"></div>
+</div>
+
+<div class="tooltip" id="tip"></div>
+
+<script>
+const HOURS = 24;
+
+// Sample dataset — pretend this came from /api/flights + /api/turnarounds for the day.
+// In the real build, ~95 of 100 bays would simply have zero turnarounds and never render a row.
+const turnarounds = [
+  { bay: 'Bay 12', team: 'T1', start: 5*60+10,  end: 6*60+5,   arr: 'AK512', dep: 'AK513', ac: '9M-AHQ', acType: 'A320',
+    cargo: 4.2, sets: 2, status: 'COMPLETED' },
+  { bay: 'Bay 12', team: 'T1', start: 14*60+30, end: 15*60+25, arr: 'AK220', dep: 'AK221', ac: '9M-AHZ', acType: 'A321',
+    cargo: 6.1, sets: 2, status: 'SCHEDULED', conflict: true },
+  { bay: 'Bay 14', team: 'T2', start: 14*60+50, end: 15*60+40, arr: 'AK330', dep: 'AK331', ac: '9M-AHX', acType: 'A320',
+    cargo: 5.0, sets: 2, status: 'SCHEDULED', conflict: true },
+  { bay: 'Bay 14', team: 'T2', start: 6*60,     end: 7*60+10,  arr: 'AK104', dep: 'AK105', ac: '9M-ABC', acType: 'A320',
+    cargo: 3.4, sets: 1, status: 'COMPLETED' },
+  { bay: 'Bay 18', team: 'T3', start: 11*60+15, end: 12*60+20, arr: 'AK140', dep: 'AK141', ac: '9M-ABD', acType: 'A330',
+    cargo: 8.8, sets: 3, status: 'BOARDING' },
+  { bay: 'Bay 18', team: 'T3', start: 19*60,    end: 20*60+5,  arr: 'AK822', dep: 'AK823', ac: '9M-ABE', acType: 'A320',
+    cargo: 2.9, sets: 1, status: 'SCHEDULED' },
+  { bay: 'Bay 21', team: 'T4', start: 7*60+30,  end: 8*60+35,  arr: 'AK430', dep: 'AK431', ac: '9M-ABF', acType: 'A320',
+    cargo: 4.7, sets: 2, status: 'COMPLETED' },
+  { bay: 'Bay 21', team: 'T4', start: 16*60,    end: 16*60+55, arr: 'AK260', dep: 'AK261', ac: '9M-ABG', acType: 'A321',
+    cargo: 5.5, sets: 2, status: 'SCHEDULED' },
+  { bay: 'Bay 23', team: 'T5', start: 22*60+30, end: 23*60+50, arr: 'AK905', dep: null,    ac: '9M-ABH', acType: 'A320',
+    cargo: 1.8, sets: 1, status: 'SCHEDULED' },
+  { bay: 'Bay 31', team: 'T5', start: 9*60,     end: 9*60+50,  arr: 'AK615', dep: 'AK616', ac: '9M-ABI', acType: 'A320',
+    cargo: 3.1, sets: 1, status: 'COMPLETED' },
+  { bay: 'Bay 31', team: 'T5', start: 13*60+5,  end: 14*60,    arr: 'AK701', dep: 'AK702', ac: '9M-ABJ', acType: 'A320',
+    cargo: 4.4, sets: 2, status: 'BOARDING' },
+  { bay: 'Bay 44', team: 'T6', start: 8*60,     end: 8*60+10,  arr: null,    dep: 'AK090', ac: '9M-ABK', acType: 'A320',
+    cargo: 0.5, sets: 1, status: 'COMPLETED' },
+  { bay: 'Bay 44', team: 'T6', start: 12*60,    end: 13*60+5,  arr: 'AK333', dep: 'AK334', ac: '9M-ABL', acType: 'A330',
+    cargo: 7.2, sets: 3, status: 'SCHEDULED' },
+  { bay: 'Bay 58', team: 'T6', start: 17*60+20, end: 18*60+15, arr: 'AK560', dep: 'AK561', ac: '9M-ABM', acType: 'A320',
+    cargo: 3.9, sets: 1, status: 'SCHEDULED' },
+  { bay: 'Bay 58', team: 'T1', start: 20*60+40, end: 21*60+45, arr: 'AK150', dep: 'AK151', ac: '9M-ABN', acType: 'A320',
+    cargo: 4.0, sets: 2, status: 'SCHEDULED' },
+];
+
+let groupMode = 'bay';
+let filterText = '';
+
+const grid = document.getElementById('grid');
+const tip = document.getElementById('tip');
+const rowCountEl = document.getElementById('rowCount');
+
+function render() {
+  grid.innerHTML = '';
+  grid.appendChild(Object.assign(document.createElement('div'), { className: 'corner' }));
+  for (let h = 0; h < HOURS; h++) {
+    const el = document.createElement('div');
+    el.className = 'hour-head';
+    el.textContent = String(h).padStart(2,'0') + ':00';
+    grid.appendChild(el);
+  }
+
+  const key = groupMode === 'bay' ? 'bay' : 'team';
+  const groups = [...new Set(turnarounds.map(t => t[key]))].sort();
+
+  const q = filterText.trim().toLowerCase();
+  const visibleGroups = groups.filter(g => {
+    if (!q) return true;
+    const rows = turnarounds.filter(t => t[key] === g);
+    return g.toLowerCase().includes(q) || rows.some(t =>
+      (t.arr || '').toLowerCase().includes(q) || (t.dep || '').toLowerCase().includes(q)
+    );
+  });
+
+  rowCountEl.textContent = `${visibleGroups.length} ${groupMode === 'bay' ? 'bays' : 'teams'} with activity (of ~100 total bays / 6 teams)`;
+
+  visibleGroups.forEach(g => {
+    const label = document.createElement('div');
+    label.className = 'row-label';
+    const rows = turnarounds.filter(t => t[key] === g);
+    label.innerHTML = `${g}<small>${rows.length} turnaround${rows.length > 1 ? 's' : ''}</small>`;
+    grid.appendChild(label);
+
+    const row = document.createElement('div');
+    row.className = 'row-bg';
+    row.style.gridColumn = `2 / span ${HOURS}`;
+    grid.appendChild(row);
+
+    rows.forEach(t => {
+      const bar = document.createElement('div');
+      bar.className = 'bar turn' + (t.conflict ? ' conflict' : '');
+      const leftPct = (t.start / (HOURS*60)) * 100;
+      const widthPct = ((t.end - t.start) / (HOURS*60)) * 100;
+      bar.style.left = leftPct + '%';
+      bar.style.width = widthPct + '%';
+      bar.textContent = `${t.arr || '—'} / ${t.dep || '—'}`;
+
+      bar.addEventListener('mousemove', e => {
+        tip.style.display = 'block';
+        const tw = 250, vw = window.innerWidth;
+        tip.style.left = Math.min(e.clientX + 14, vw - tw - 10) + 'px';
+        tip.style.top = (e.clientY + 14) + 'px';
+        tip.innerHTML = `
+          <div class="tt-title"><span>${t.ac} · ${t.acType}</span><span style="color:#94a3b8;font-weight:400">${t.bay}</span></div>
+          <div class="tt-row"><span>Arrival</span><b>${t.arr ?? '—'} @ ${mins(t.start)}</b></div>
+          <div class="tt-row"><span>Departure</span><b>${t.dep ?? '—'} @ ${mins(t.end)}</b></div>
+          <div class="tt-row"><span>Ground time</span><b>${t.end - t.start} min</b></div>
+          <div class="tt-row"><span>Team</span><b>${t.team}</b></div>
+          <div class="tt-row"><span>Cargo</span><b>${t.cargo} t · ${t.sets} set${t.sets>1?'s':''}</b></div>
+          <div class="tt-row"><span>Status</span><b>${t.status}</b></div>
+          <hr/>
+          ${t.conflict
+            ? `<div class="tt-warn">⚠ Overlaps another turnaround on ${t.bay}</div>`
+            : `<div class="tt-ok">✓ No conflicts</div>`}
+        `;
+      });
+      bar.addEventListener('mouseleave', () => tip.style.display = 'none');
+      row.appendChild(bar);
+
+      if (t.conflict) {
+        const badge = document.createElement('div');
+        badge.className = 'conflict-badge';
+        badge.textContent = '!';
+        row.appendChild(badge);
+        // position badge relative to bar
+        const positionBadge = () => {
+          badge.style.position = 'absolute';
+          badge.style.left = `calc(${leftPct}% + ${widthPct}% - 6px)`;
+          badge.style.top = '2px';
+        };
+        positionBadge();
+      }
+    });
+  });
+
+  const nowMin = 15*60+40;
+  const nowLine = document.createElement('div');
+  nowLine.className = 'now-line';
+  nowLine.style.gridRow = `1 / span ${visibleGroups.length + 1}`;
+  nowLine.style.gridColumn = '2 / span 24';
+  nowLine.style.left = `calc((100% ) * ${nowMin/(HOURS*60)})`;
+  grid.style.position = 'relative';
+  grid.appendChild(nowLine);
+  const tag = document.createElement('div');
+  tag.className = 'now-tag';
+  tag.textContent = 'now';
+  nowLine.appendChild(tag);
+}
+
+function mins(m) {
+  const h = Math.floor(m/60).toString().padStart(2,'0');
+  const mm = (m%60).toString().padStart(2,'0');
+  return `${h}:${mm}`;
+}
+
+document.getElementById('groupToggle').addEventListener('click', e => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  groupMode = btn.dataset.mode;
+  document.querySelectorAll('#groupToggle button').forEach(b => b.classList.toggle('active', b === btn));
+  render();
+});
+
+document.getElementById('search').addEventListener('input', e => {
+  filterText = e.target.value;
+  render();
+});
+
+render();
+</script>
+
+</body>
+</html>

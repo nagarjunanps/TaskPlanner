@@ -10,8 +10,8 @@ HARD  H-T7   A turnaround running more than one loader set must have at
 SOFT  S-T1   Minimise unassigned slots (non-RLS roles).
 SOFT  S-T2   Balance assignments per staff (linear penalty beyond 8
              turnarounds/shift — a light tie-breaker, not a capacity cap).
-SOFT  S-T3   Staggered meal break — staff only penalised for turnarounds in
-             their own break half (0 = first 30 min, 1 = second 30 min).
+SOFT  S-T3   Staggered meal break (60 min, later in the shift) — staff only
+             penalised for turnarounds in their own break half.
 SOFT  S-T4   Enforce minimum travel gap — penalise consecutive assignments
              to the same staff member when the gap is smaller than the
              bay-to-bay travel time. RLS gets a shorter required gap and an
@@ -22,6 +22,10 @@ SOFT  S-T6   Minimise unassigned RLS slots — weighted lower than S-T1
              because RLS is mandatory in principle but in practice
              turnarounds are routinely worked without one (RLS shows up
              late or not at all), so going unfilled is tolerated more.
+SOFT  S-T7   Staggered tea break (30 min, earlier in the shift) — a second,
+             independent break window from S-T3's meal break, placed at a
+             different third of the shift so the two breaks land well apart
+             instead of one stretched/doubled-up rest period.
 """
 from timefold.solver.score import (
     Constraint,
@@ -73,6 +77,55 @@ def _prep_buffer_minutes(task_role: str) -> int:
     return 0 if task_role == "RLS" else 15
 
 
+# ── Long-turnaround leg splitting ────────────────────────────────────────────
+# A normal quick turn (30-45 min) is worked start-to-finish by one crew, so
+# its slots cover the full [STA, STD] span. A long turnaround (e.g. a
+# maintenance hold or late-cargo delay) can run for hours — long enough that
+# the team on duty at arrival has gone off shift by departure. For those, the
+# planner splits each role into an ARRIVAL-leg slot (worked near STA) and a
+# DEPARTURE-leg slot (worked near STD), which can be filled by two different
+# crews. See routers.task_planner._build_plan_data for the shift-window side
+# of this and solver.task_solver_manager._build_task_problem for slot
+# generation.
+LONG_TURNAROUND_THRESHOLD_MIN = 55
+ARRIVAL_LEG_MINUTES = 45    # how long arrival-leg work (unload/marshal) lasts
+DEPARTURE_LEG_MINUTES = 45  # how long departure-leg work (load/pushback) lasts
+
+
+def ground_minutes(sta_minutes: int, std_minutes: int) -> int:
+    """Ground time in minutes, handling a turnaround that spans midnight."""
+    return (std_minutes - sta_minutes) % 1440
+
+
+def is_long_turnaround(sta_minutes: int, std_minutes: int) -> bool:
+    return ground_minutes(sta_minutes, std_minutes) >= LONG_TURNAROUND_THRESHOLD_MIN
+
+
+def _slot_window(task_role: str, leg: str, sta_minutes: int, std_minutes: int) -> tuple[int, int]:
+    """(work_start_min, work_end_min) for a role-slot, accounting for which
+    leg of a (possibly split) turnaround it belongs to."""
+    if leg == "ARRIVAL":
+        return sta_minutes - _prep_buffer_minutes(task_role), sta_minutes + ARRIVAL_LEG_MINUTES
+    if leg == "DEPARTURE":
+        return std_minutes - DEPARTURE_LEG_MINUTES, std_minutes
+    return sta_minutes - _prep_buffer_minutes(task_role), std_minutes
+
+
+def _window(slot: RoleSlot) -> tuple[int, int]:
+    return _slot_window(slot.task_role, slot.leg, slot.turnaround.sta_minutes, slot.turnaround.std_minutes)
+
+
+def required_sets_for_leg(turnaround, leg: str) -> int:
+    """Arrival and departure cargo can differ, so a split turnaround's two
+    legs can each need a different number of loader sets — fall back to the
+    combined value for an unsplit ("BOTH") turnaround."""
+    if leg == "ARRIVAL":
+        return turnaround.arrival_required_sets
+    if leg == "DEPARTURE":
+        return turnaround.departure_required_sets
+    return turnaround.required_sets
+
+
 @constraint_provider
 def task_assignment_constraints(cf: ConstraintFactory) -> list[Constraint]:
     return [
@@ -89,6 +142,7 @@ def task_assignment_constraints(cf: ConstraintFactory) -> list[Constraint]:
         minimize_unassigned_rls(cf),
         balance_assignments_per_staff(cf),
         protect_meal_break_window(cf),
+        protect_tea_break_window(cf),
         enforce_travel_gap(cf),
         prefer_same_sector_assignments(cf),
     ]
@@ -150,10 +204,7 @@ def no_double_booking(cf: ConstraintFactory) -> Constraint:
             Joiners.filtering(lambda a, b: b.staff is not None),
             Joiners.filtering(lambda a, b: a.turnaround.id != b.turnaround.id),
             Joiners.filtering(
-                lambda a, b: (
-                    (a.turnaround.sta_minutes - _prep_buffer_minutes(a.task_role)) < b.turnaround.std_minutes
-                    and (b.turnaround.sta_minutes - _prep_buffer_minutes(b.task_role)) < a.turnaround.std_minutes
-                )
+                lambda a, b: _window(a)[0] < _window(b)[1] and _window(b)[0] < _window(a)[1]
             ),
         )
         .penalize(HardSoftScore.ONE_HARD)
@@ -187,12 +238,12 @@ def multi_set_turnaround_needs_driver(cf: ConstraintFactory) -> Constraint:
     soft (S-T1) concern like any other role."""
     return (
         cf.for_each_including_unassigned(RoleSlot)
-        .filter(lambda s: s.task_role == "DRIVER" and s.turnaround.required_sets > 1)
+        .filter(lambda s: s.task_role == "DRIVER" and required_sets_for_leg(s.turnaround, s.leg) > 1)
         .group_by(
-            lambda s: s.turnaround.id,
+            lambda s: (s.turnaround.id, s.leg),
             ConstraintCollectors.sum(lambda s: 1 if s.staff is not None else 0),
         )
-        .filter(lambda turnaround_id, assigned_count: assigned_count == 0)
+        .filter(lambda key, assigned_count: assigned_count == 0)
         .penalize(HardSoftScore.ONE_HARD)
         .as_constraint("H-T7: Multi-set turnaround has zero drivers assigned")
     )
@@ -245,11 +296,11 @@ def balance_assignments_per_staff(cf: ConstraintFactory) -> Constraint:
 
 
 def protect_meal_break_window(cf: ConstraintFactory) -> Constraint:
-    """S-T3: Staggered meal breaks.
+    """S-T3: Staggered meal break (60 min, two-thirds through the shift).
 
     Each staff member has a ``break_group`` (0 or 1).  Each turnaround has a
-    ``break_half`` (0 = first 30 min of break window, 1 = second 30 min,
-    -1 = outside break window).  We only penalise when the turnaround's half
+    ``meal_break_half`` (0 = first half of the window, 1 = second half,
+    -1 = outside the window).  We only penalise when the turnaround's half
     matches the staff member's group — so group-0 staff are free during the
     second half and group-1 staff during the first half, creating staggered
     breaks rather than a team-wide blackout.
@@ -257,10 +308,30 @@ def protect_meal_break_window(cf: ConstraintFactory) -> Constraint:
     return (
         cf.for_each(RoleSlot)
         .filter(lambda s: s.staff is not None)
-        .filter(lambda s: s.turnaround.break_half >= 0)          # in break window
-        .filter(lambda s: s.turnaround.break_half == s.staff.break_group)  # matches staff group
+        .filter(lambda s: s.turnaround.meal_break_half >= 0)          # in break window
+        .filter(lambda s: s.turnaround.meal_break_half == s.staff.break_group)  # matches staff group
         .penalize(HardSoftScore.of_soft(5))
-        .as_constraint("S-T3: Assignment during staff break window slot")
+        .as_constraint("S-T3: Assignment during staff meal break window slot")
+    )
+
+
+def protect_tea_break_window(cf: ConstraintFactory) -> Constraint:
+    """S-T7: Staggered tea break (30 min, one-third through the shift).
+
+    Mirrors S-T3 but for a second, independent break window placed at a
+    different point in the shift (1/3 through, vs 2/3 for the meal break) —
+    so the two breaks are separated by roughly a third of the shift's
+    duration by construction, rather than landing back-to-back as two
+    incidental idle gaps would. Weighted lighter than the meal break since
+    a missed tea break is a smaller welfare concern than a missed meal break.
+    """
+    return (
+        cf.for_each(RoleSlot)
+        .filter(lambda s: s.staff is not None)
+        .filter(lambda s: s.turnaround.tea_break_half >= 0)
+        .filter(lambda s: s.turnaround.tea_break_half == s.staff.break_group)
+        .penalize(HardSoftScore.of_soft(4))
+        .as_constraint("S-T7: Assignment during staff tea break window slot")
     )
 
 
@@ -275,16 +346,14 @@ def enforce_travel_gap(cf: ConstraintFactory) -> Constraint:
             Joiners.filtering(lambda a, b: a.id < b.id),
             Joiners.filtering(lambda a, b: b.staff is not None),
             Joiners.filtering(lambda a, b: a.turnaround.id != b.turnaround.id),
-            Joiners.filtering(
-                lambda a, b: a.turnaround.std_minutes <= (b.turnaround.sta_minutes - _prep_buffer_minutes(b.task_role))
-            ),
+            Joiners.filtering(lambda a, b: _window(a)[1] <= _window(b)[0]),
         )
         .penalize(
             HardSoftScore.of_soft(1),
             lambda a, b: max(
                 0,
                 _travel_minutes(a.turnaround.bay_sector, b.turnaround.bay_sector, b.task_role)
-                - ((b.turnaround.sta_minutes - _prep_buffer_minutes(b.task_role)) - a.turnaround.std_minutes),
+                - (_window(b)[0] - _window(a)[1]),
             ),
         )
         .as_constraint("S-T4: Insufficient travel gap between tasks")

@@ -161,6 +161,7 @@ class OTVolunteer(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     staff_id: Mapped[int] = mapped_column(ForeignKey("staff.id"), nullable=False)
+    shift_id: Mapped[int] = mapped_column(ForeignKey("shifts.id"), nullable=False)
     date: Mapped[date] = mapped_column(Date, nullable=False)
     signed_up_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     approved_by: Mapped[int | None] = mapped_column(Integer, nullable=True)  # Staff.id of approving DM
@@ -169,6 +170,7 @@ class OTVolunteer(Base):
     staff: Mapped["Staff"] = relationship(
         "Staff", back_populates="ot_volunteers", foreign_keys="[OTVolunteer.staff_id]"
     )
+    shift: Mapped["Shift"] = relationship("Shift", foreign_keys="[OTVolunteer.shift_id]")
 
 
 # ── Flight & Turnaround ───────────────────────────────────────────────────────
@@ -206,6 +208,12 @@ class Turnaround(Base):
     ground_time_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cargo_weight_tons: Mapped[float | None] = mapped_column(Float, nullable=True)
     required_sets: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # Arrival and departure cargo can differ, so a long (split-crew) turnaround
+    # needs its own loader-set count per leg rather than sharing one number —
+    # `required_sets` above remains the combined/BOTH-leg value used when the
+    # turnaround isn't split.
+    arrival_required_sets: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    departure_required_sets: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     arrival_flight: Mapped["Flight | None"] = relationship("Flight", foreign_keys=[arrival_flight_id])
     departure_flight: Mapped["Flight | None"] = relationship("Flight", foreign_keys=[departure_flight_id])
@@ -214,7 +222,7 @@ class Turnaround(Base):
 
 class TaskAssignment(Base):
     __tablename__ = "task_assignments"
-    __table_args__ = (UniqueConstraint("turnaround_id", "task_role", "set_number", "slot_index"),)
+    __table_args__ = (UniqueConstraint("turnaround_id", "task_role", "set_number", "slot_index", "leg"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     turnaround_id: Mapped[int] = mapped_column(ForeignKey("turnarounds.id"), nullable=False)
@@ -222,6 +230,11 @@ class TaskAssignment(Base):
     task_role: Mapped[TaskRole] = mapped_column(Enum(TaskRole), nullable=False)
     set_number: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     slot_index: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # BOTH = one crew covers the whole turnaround (the default/common case).
+    # ARRIVAL / DEPARTURE = the turnaround's ground time was long enough to
+    # split staffing into a separate arrival crew and departure crew, which
+    # may belong to two different teams/shifts.
+    leg: Mapped[str] = mapped_column(String(10), nullable=False, default="BOTH")
     staff_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"), nullable=True)
     source: Mapped[AssignmentSource] = mapped_column(Enum(AssignmentSource), default=AssignmentSource.SOLVER)
 

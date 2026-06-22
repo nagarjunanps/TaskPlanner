@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   ClipboardList, Plane, ArrowDown, ArrowUp, Clock,
-  MapPin, ChevronLeft, ChevronRight, Calendar,
+  MapPin, ChevronLeft, ChevronRight, Calendar, Coffee,
 } from 'lucide-react'
 import { getStaffTasks } from '../api/client'
 import { useAuth } from '../context/AuthContext'
@@ -35,13 +35,115 @@ const ROLE_LABEL: Record<string, string> = {
 
 // Staff already know what to do on each flight — just show which flights
 // they're on, not the per-role/per-set breakdown. Collapse multiple slot
-// assignments on the same turnaround into a single flight row.
+// assignments on the same turnaround+leg into a single flight row. A split
+// (long) turnaround's ARRIVAL and DEPARTURE legs are worked at different
+// times, so they must stay as separate rows rather than collapsing together.
+function flightKey(t: StaffTask): string {
+  return `${t.turnaround_id}:${t.leg}`
+}
+
 function dedupeByFlight(tasks: StaffTask[]): StaffTask[] {
-  const seen = new Map<number, StaffTask>()
+  const seen = new Map<string, StaffTask>()
   for (const t of tasks) {
-    if (!seen.has(t.turnaround_id)) seen.set(t.turnaround_id, t)
+    const key = flightKey(t)
+    if (!seen.has(key)) seen.set(key, t)
   }
   return [...seen.values()]
+}
+
+// ── Breaks ────────────────────────────────────────────────────────────────────
+// Only surface gaps long enough to actually be a break (> 20 min) — shorter
+// gaps are just normal turnaround buffer and would clutter the list.
+//
+// A shift gets at most two planned breaks — a 60-min meal break and a 30-min
+// tea break — so even if the actual idle gap between flights runs longer
+// than that, the displayed break is capped rather than shown at its full raw
+// length (an uncapped gap was previously rendering as e.g. two 90-min
+// breaks, which overstates how much break time staff are actually owed).
+// The meal break is placed on whichever idle gap falls closest to the
+// midpoint of the staff's working span, not just the first gap of the day —
+// a break parked right at shift-start isn't real rest partway through a long
+// shift. The second (tea) break must also sit at least MIN_GAP_BETWEEN_BREAKS
+// away from the meal break — two idle gaps that just happen to be adjacent,
+// split only by a single quick turnaround, aren't two separate rest periods.
+const MIN_BREAK_MINUTES = 20
+const BREAK_CAPS_MINUTES = [60, 30]
+const MIN_GAP_BETWEEN_BREAKS = 60
+
+function toMinutes(hhmm: string | null | undefined): number | null {
+  if (!hhmm) return null
+  const [h, m] = hhmm.split(':').map(Number)
+  return h * 60 + m
+}
+
+function fmtMinutes(min: number): string {
+  const h = Math.floor(min / 60) % 24
+  const m = min % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
+
+interface Break {
+  start: number
+  end: number
+}
+
+function computeBreaks(flights: StaffTask[]): Map<string, Break> {
+  const breaks = new Map<string, Break>()
+  if (flights.length < 2) return breaks
+
+  const gaps: { key: string; start: number; end: number; gap: number }[] = []
+  for (let i = 0; i < flights.length - 1; i++) {
+    const cur = flights[i]
+    const next = flights[i + 1]
+    const curEnd = toMinutes(cur.dep_time ?? cur.arr_time)
+    const nextStart = toMinutes(next.arr_time ?? next.dep_time)
+    if (curEnd == null || nextStart == null) continue
+    const gap = nextStart - curEnd
+    if (gap > MIN_BREAK_MINUTES) {
+      gaps.push({ key: flightKey(cur), start: curEnd, end: nextStart, gap })
+    }
+  }
+  if (gaps.length === 0) return breaks
+
+  const shiftStart = toMinutes(flights[0].arr_time ?? flights[0].dep_time)
+  const last = flights[flights.length - 1]
+  const shiftEnd = toMinutes(last.dep_time ?? last.arr_time)
+  const midpoint = shiftStart != null && shiftEnd != null ? (shiftStart + shiftEnd) / 2 : gaps[0].start
+
+  // Rank gaps by how close their midpoint sits to the shift's midpoint —
+  // the closest becomes the 60-min meal break (real mid-shift rest), the
+  // next-closest the 30-min tea break. Any further gaps stay unflagged.
+  const ranked = [...gaps].sort((a, b) => {
+    const distA = Math.abs((a.start + a.end) / 2 - midpoint)
+    const distB = Math.abs((b.start + b.end) / 2 - midpoint)
+    return distA - distB
+  })
+
+  const chosen: { start: number; end: number }[] = []
+  for (const g of ranked) {
+    if (chosen.length >= BREAK_CAPS_MINUTES.length) break
+    const tooClose = chosen.some(c => g.start < c.end + MIN_GAP_BETWEEN_BREAKS && c.start < g.end + MIN_GAP_BETWEEN_BREAKS)
+    if (tooClose) continue
+    const cap = BREAK_CAPS_MINUTES[chosen.length]
+    const brk = { start: g.start, end: g.start + Math.min(g.gap, cap) }
+    breaks.set(g.key, brk)
+    chosen.push(brk)
+  }
+
+  return breaks
+}
+
+function BreakRow({ brk }: { brk: Break }) {
+  const duration = brk.end - brk.start
+  return (
+    <div className="flex items-center gap-3 px-1 py-1">
+      <div className="flex-1 border-t border-dashed border-amber-300" />
+      <span className="flex items-center gap-1.5 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-3 py-1 shrink-0">
+        <Coffee size={12} /> Break {fmtMinutes(brk.start)}–{fmtMinutes(brk.end)} · {duration} min
+      </span>
+      <div className="flex-1 border-t border-dashed border-amber-300" />
+    </div>
+  )
 }
 
 // ── Flight row ────────────────────────────────────────────────────────────────
@@ -57,6 +159,11 @@ function FlightRow({ task }: { task: StaffTask }) {
         <div className="font-bold text-slate-800 text-base leading-tight">
           {task.aircraft_registration ?? '—'}
           <span className="text-xs font-normal text-slate-400 ml-2">{task.aircraft_type ?? ''}</span>
+          {task.leg !== 'BOTH' && (
+            <span className="text-xs font-medium text-indigo-500 bg-indigo-50 border border-indigo-100 rounded-full px-2 py-0.5 ml-2">
+              {task.leg === 'ARRIVAL' ? 'Arrival crew' : 'Departure crew'}
+            </span>
+          )}
         </div>
         <div className="flex flex-wrap gap-3 mt-1 text-xs text-slate-500">
           {task.arr_flight_number && (
@@ -112,6 +219,7 @@ export default function StaffTasksPage() {
     return ta.localeCompare(tb)
   })
 
+  const breaksAfter = computeBreaks(flights)
   const isToday = date === todayLocal()
 
   if (!staffId) {
@@ -221,9 +329,15 @@ export default function StaffTasksPage() {
 
         {/* Flight list */}
         <div className="space-y-2">
-          {flights.map(t => (
-            <FlightRow key={t.turnaround_id} task={t} />
-          ))}
+          {flights.map(t => {
+            const brk = breaksAfter.get(flightKey(t))
+            return (
+              <Fragment key={flightKey(t)}>
+                <FlightRow task={t} />
+                {brk && <BreakRow brk={brk} />}
+              </Fragment>
+            )
+          })}
         </div>
 
         {/* Bottom spacer for mobile bottom nav */}

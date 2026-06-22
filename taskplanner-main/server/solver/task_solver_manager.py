@@ -13,7 +13,7 @@ from timefold.solver.config import (
     TerminationConfig,
 )
 
-from solver.task_constraints import _prep_buffer_minutes, task_assignment_constraints
+from solver.task_constraints import _slot_window, is_long_turnaround, required_sets_for_leg, task_assignment_constraints
 from solver.task_domain import RoleSlot, TaskPlanSolution, TaskStaffFact, TurnaroundFact
 
 
@@ -42,7 +42,7 @@ class TaskSolveJob:
 _task_jobs: dict[str, TaskSolveJob] = {}
 
 
-def _build_task_solver(time_limit_seconds: int = 30):
+def _build_task_solver(time_limit_seconds: int = 60):
     config = SolverConfig(
         solution_class=TaskPlanSolution,
         entity_class_list=[RoleSlot],
@@ -57,25 +57,41 @@ def _build_task_solver(time_limit_seconds: int = 30):
 
 
 def _build_task_problem(plan_data: dict) -> TaskPlanSolution:
-    turnarounds = [TurnaroundFact(**t) for t in plan_data["turnarounds"]]
+    # `legs` (e.g. ["ARRIVAL", "DEPARTURE"] or ["BOTH"]) tells us which leg(s)
+    # of each turnaround are relevant to *this* solve job — see
+    # routers.task_planner._build_plan_data, which decides per shift window
+    # whether a long turnaround's arrival leg, departure leg, or both fall
+    # inside it. It isn't a TurnaroundFact field, so pop it before
+    # constructing the dataclass.
+    raw_turnarounds = [dict(t) for t in plan_data["turnarounds"]]
+    legs_by_id: dict[int, list[str]] = {}
+    for t in raw_turnarounds:
+        legs = t.pop("legs", None)
+        legs_by_id[t["id"]] = legs if legs else (
+            ["ARRIVAL", "DEPARTURE"] if is_long_turnaround(t["sta_minutes"], t["std_minutes"]) else ["BOTH"]
+        )
+
+    turnarounds = [TurnaroundFact(**t) for t in raw_turnarounds]
     staff_list = [TaskStaffFact(**s) for s in plan_data["staff"]]
 
     slots: list[RoleSlot] = []
     slot_id = 0
     for ta in turnarounds:
-        # 1 RLS slot per turnaround
-        slots.append(RoleSlot(id=slot_id, turnaround=ta, task_role="RLS", set_number=0, slot_index=1))
-        slot_id += 1
-        # 1 TOWER slot per turnaround
-        slots.append(RoleSlot(id=slot_id, turnaround=ta, task_role="TOWER", set_number=0, slot_index=1))
-        slot_id += 1
-        # per set: 1 DRIVER + 3 LOADERs
-        for set_num in range(1, ta.required_sets + 1):
-            slots.append(RoleSlot(id=slot_id, turnaround=ta, task_role="DRIVER", set_number=set_num, slot_index=1))
+        for leg in legs_by_id[ta.id]:
+            # 1 RLS slot per leg
+            slots.append(RoleSlot(id=slot_id, turnaround=ta, task_role="RLS", set_number=0, slot_index=1, leg=leg))
             slot_id += 1
-            for loader_idx in range(1, 4):
-                slots.append(RoleSlot(id=slot_id, turnaround=ta, task_role="LOADER", set_number=set_num, slot_index=loader_idx))
+            # 1 TOWER slot per leg
+            slots.append(RoleSlot(id=slot_id, turnaround=ta, task_role="TOWER", set_number=0, slot_index=1, leg=leg))
+            slot_id += 1
+            # per set: 1 DRIVER + 3 LOADERs — arrival/departure legs can need
+            # a different number of sets since their cargo can differ.
+            for set_num in range(1, required_sets_for_leg(ta, leg) + 1):
+                slots.append(RoleSlot(id=slot_id, turnaround=ta, task_role="DRIVER", set_number=set_num, slot_index=1, leg=leg))
                 slot_id += 1
+                for loader_idx in range(1, 4):
+                    slots.append(RoleSlot(id=slot_id, turnaround=ta, task_role="LOADER", set_number=set_num, slot_index=loader_idx, leg=leg))
+                    slot_id += 1
 
     return TaskPlanSolution(
         team_id=plan_data["team_id"],
@@ -115,9 +131,8 @@ def _scan_conflicts(slots: list[RoleSlot]) -> list[dict]:
                         "other_turnaround_id": None,
                     })
                     continue
-                a_start = a.turnaround.sta_minutes - _prep_buffer_minutes(a.task_role)
-                b_start = b.turnaround.sta_minutes - _prep_buffer_minutes(b.task_role)
-                a_end, b_end = a.turnaround.std_minutes, b.turnaround.std_minutes
+                a_start, a_end = _slot_window(a.task_role, a.leg, a.turnaround.sta_minutes, a.turnaround.std_minutes)
+                b_start, b_end = _slot_window(b.task_role, b.leg, b.turnaround.sta_minutes, b.turnaround.std_minutes)
                 if a_start < b_end and b_start < a_end:
                     conflicts.append({
                         "staff_id": staff_id, "staff_name": staff_name,
@@ -136,7 +151,7 @@ async def start_task_solve(
     team_id: int,
     date_str: str,
     plan_data: dict,
-    time_limit: int = 30,
+    time_limit: int = 60,
     on_complete: Optional[Callable[["TaskSolveJob"], Awaitable[None]]] = None,
 ) -> str:
     job_id = str(uuid.uuid4())
@@ -165,7 +180,7 @@ async def start_task_solve(
                 if not job.conflicts or attempt == max_attempts - 1:
                     break
                 job.retry_count = attempt + 1
-                attempt_time = min(attempt_time + 30, 90)
+                attempt_time = min(attempt_time + 60, 180)
 
             # One short LLM (or rule-based) explanation of the final result —
             # this only *explains* why slots are unassigned/conflicted; it

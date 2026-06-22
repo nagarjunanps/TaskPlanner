@@ -643,3 +643,69 @@ Cleared `flights`/`turnarounds`/`task_assignments` tables again so the next solv
 **Fix — `server/Dockerfile`:** switched to `openjdk-21-jdk-headless` and updated `JAVA_HOME` to `/usr/lib/jvm/java-21-openjdk-amd64` to match. Still satisfies Timefold's documented JDK 17+ minimum — just a higher version than originally planned, forced by the base image's current Debian release. Updated `README.md`'s Deployment section and Common Issues table to match, and noted in both that a future base-image bump could shift the available JDK version again (check `apt-cache search openjdk` in the build log if it recurs).
 
 **Status:** Dockerfile fix made; pending user's next Render deploy to confirm the JDK 21 install + JAVA_HOME path work end-to-end.
+
+---
+
+## 2026-06-20 — Triple-Overlap Windowing Bug, Cert Coverage Widening, Reduced 3-Set Flights
+
+**Reported:** user pushed back on the magnitude of unassigned slots (301/day, ~16%) given that staffing capacity vastly exceeds peak concurrent turnaround demand (6-10 concurrent vs. 53-159 staff on duty depending on time of day) — expected closer to ~50/day.
+
+### A — Root cause: 3-way shift-overlap windowing bug (`server/routers/task_planner.py`)
+
+**Investigation:** computed max concurrent turnarounds (6 exact / 10 in any 30-min window) and min/max staff on duty (53 min, 159 max, 106 normal) directly from the DB, confirming demand never came close to exhausting capacity — the gap had to be a bug, not a real shortage. Traced it to `start_all_teams_solver`'s Phase 2: it only compared each team against its *immediate* neighbor when carving out shift overlaps. When **three** shifts mutually overlapped (e.g. S1∩S2 = 11:00–15:00 and S2∩S3 = 14:30–23:00, which themselves overlap in 14:30–15:00), the middle team's window was computed as `window_start=15:00, exclusive_until=14:30` — an inverted interval. Downstream midnight-wrap logic misread that as "nearly the whole day," handing that one team ~96 of the day's 100 turnarounds to staff alone with only its own headcount (one run showed `total_slots=892`, `unassigned=202`, infeasible `-2hard`).
+
+**Fix:** replaced the pairwise adjacent-neighbor logic with a proper sweep-line over every active team's `[shift_start, end)` interval, partitioning the day into segments by exactly which set of teams is on duty in each one (handles N-way overlaps, not just pairs), then launching one job per segment — solo if 1 team, pooled via the existing `extra_team_ids` list param if 2+. The night→morning handoff boundary (e.g. S4 23:00–11:00 back to S1 05:00) is still deliberately exempted from pooling, same as before (empirically worse when pooled) — implemented by capping the last-by-start team's interval at the first team's start time before the sweep, so it degenerates to the old special-cased behavior there.
+
+**Caveat:** `TaskSolverStatusOut.pooled_with_team_id` stays a single `Optional[int]` for backward compatibility — a genuine 3-way pooled job still solves correctly (all extra teams' staff are unioned in via `extra_team_ids`), but the API/UI only surfaces one of the pooled teams' IDs in that field, not all of them.
+
+**Gotcha hit while verifying:** two stale `uvicorn --reload` processes were both bound to port 8000 from earlier in the session, so the first re-test silently hit old code. Killed both and restarted a single clean instance before the fix showed up.
+
+**Verified on 2026-06-20 real data:** day-total unassigned dropped from 301 to 95 (924 total slots), and every job now scores `0hard` (no infeasibility anywhere, vs. one infeasible job before). Remaining 95 concentrated almost entirely in the two non-pooled solo windows (T6 alone 05:00–11:00: 57/266; T4 alone 00:30–05:00: 36/176) — pooled windows were ~100% filled.
+
+### B — Cert coverage widened for non-pooled shift-edge windows (`server/seed.py`)
+
+Solo windows (no neighboring team to pool certified staff from) were still short. Widened `GSE_DRIVING`/`TOWER_OPS` coverage per team from `RA[0:24]`/`RA[12:36]` (60% each, 12 dual) to `RA[0:32]`/`RA[8:40]` (80% each, 24 dual) — union now covers all 40 RA per team, so every RA holds at least one of the two certs.
+
+### C — Reduced 3-set-loader flight share (`server/services/flight_data.py`)
+
+`_build_mock_schedule`'s cargo-weight distribution shifted from 50/35/15% (light/medium/heavy → 1/2/3 sets) to 50/43/7%, roughly halving 3-set flights (15→~7-10 of the day's 100 turnarounds) without eliminating them — each 3-set flight needs 3 DRIVER + 9 LOADER slots filled, so fewer of them meaningfully reduces total demand.
+
+**Verified together on 2026-06-20** (DB wiped, reseeded, rosters/flights regenerated): day-total unassigned dropped further to 45/864 slots (5.2%), all jobs still `0hard`. T6-alone improved from 57/266 (21%) to 27/246 (11%); T4-alone from 36/176 (20%) to 18/160 (11%) — roughly halved in both. Pooled windows remained ~100% filled. Lands right in the user's ~50/day expectation.
+
+**Status:** Complete.
+
+---
+
+## 2026-06-20 — Per-Shift OT Caps (`OTVolunteer.shift_id`)
+
+**Asked:** user noticed `OTVolunteer` had no shift association — the existing H7 cap (`MAX_OT_SLOTS = 6`) was a flat per-day total, so mentally splitting it as "3 for S1 + 3 for S4" had no effect: the system could only see "6 OT signups today," not which shift each one covered. User confirmed: add a `shift_id` field and enforce per-shift caps instead.
+
+**Backend (`server/models/db_models.py`, `schemas.py`, `routers/overtime.py`):** added `shift_id: Mapped[int]` (FK to `shifts.id`, NOT NULL) and a one-directional `shift` relationship on `OTVolunteer`; added `shift_id: int` to `OTVolunteerCreate`/`OTVolunteerOut`. In `signup_volunteer`, added a `Shift` lookup (404 if missing), renamed `MAX_OT_SLOTS` → `MAX_OT_SLOTS_PER_SHIFT` (still 6), and scoped the H7 cap-check query to `OTVolunteer.shift_id == payload.shift_id` in addition to the date filter, with the 400 error now naming the specific shift code (e.g. `"OT volunteer slots full for S1 on 2026-06-25 (max 6)."`). The per-staff "already signed up today" duplicate check stays date-only (not shift-scoped) — one person can't double-dip OT across two shifts the same day.
+
+**Frontend (`client/src/api/types.ts`, `client.ts`, `pages/OvertimePage.tsx`):** `OTVolunteer` type and `signupOT()` gained `shift_id`. `OvertimePage` now shows one slot-counter card per shift (each capped at 6) instead of one global bar, the sign-up form has a shift dropdown, and the volunteer table/cards show each row's shift code.
+
+**Migration:** `shift_id` is a new NOT-NULL column on an existing table with no Alembic migration path in this project — wiped `gtrmy.db` and re-ran `seed.py` (consistent with the established pattern for schema changes here).
+
+**Verified on 2026-06-20** via direct API calls with an admin bearer token: signed up 6 different staff to shift S1 on the same date — 7th S1 signup correctly rejected (`"OT volunteer slots full for S1 ... (max 6)"`), while a signup for S4 on the same date succeeded unaffected, confirming the cap is now per-shift rather than a shared flat pool. Reset `gtrmy.db` to a clean seed afterward.
+
+**Status:** Complete.
+
+## 2026-06-18 — Split arrival/departure crews for long-ground-time turnarounds
+
+**Asked:** user noticed the timeline mockup had no flights with unusually long ground times, and reasoned that when ground time is large enough, a single crew shouldn't cover the whole turnaround — one team should handle arrival (unload/marshal) and a separate team should handle departure (load/pushback). Asked to scope as seed-data-only vs. a full architecture change; user chose **full split-team implementation**.
+
+**Seed data (`server/services/flight_data.py`):** `_build_mock_schedule` now forces a long ground time (150-220 min, vs. the normal 30/35 min) for every 17th turnaround (`i % 17 == 5`), producing 5 long-ground turnarounds per day spread across different times/shift boundaries.
+
+**Domain (`server/solver/task_domain.py`):** `RoleSlot` gained a `leg: str = "BOTH"` field (`"BOTH"` | `"ARRIVAL"` | `"DEPARTURE"`). `TurnaroundFact` itself is unchanged — leg-splitting metadata is passed alongside `plan_data`, not baked into the fact, to avoid touching `TurnaroundFact(**t)` construction.
+
+**Constraints (`server/solver/task_constraints.py`):** added `LONG_TURNAROUND_THRESHOLD_MIN = 90`, `ARRIVAL_LEG_MINUTES`/`DEPARTURE_LEG_MINUTES = 45`, `ground_minutes()`/`is_long_turnaround()` (midnight-safe), and `_slot_window()`/`_window()` which return a slot's actual working window based on its leg — `"BOTH"` is unchanged (`[sta - prep_buffer, std]`), `"ARRIVAL"` is `[sta - prep_buffer, sta+45]`, `"DEPARTURE"` is `[std-45, std]`. H-T5 (`no_double_booking`) and S-T4 (`enforce_travel_gap`) now use `_window()` instead of the flat sta→std span; H-T7 (`multi_set_turnaround_needs_driver`) groups by `(turnaround.id, leg)` instead of just `turnaround.id`. H-T6 (`no_multiple_roles_same_turnaround`) was deliberately left keyed on `turnaround.id` only — it already enforces "different person per leg" as a side effect.
+
+**Solver manager / router (`task_solver_manager.py`, `routers/task_planner.py`):** `_build_plan_data` computes each turnaround's relevant legs (`["BOTH"]` or `["ARRIVAL","DEPARTURE"]`) and filters them per shift window (so a long turnaround's two legs can land in different, even non-adjacent, team/window solve jobs); `_build_task_problem` generates one full set of RLS/TOWER/DRIVER/LOADER slots per relevant leg. `_persist_assignments` and the `/validate` endpoint are leg-aware (`leg` added to the upsert key and to per-turnaround dedup keys).
+
+**Schema (`server/models/db_models.py`):** `TaskAssignment` gained `leg: str = "BOTH"`, and its unique constraint became `(turnaround_id, task_role, set_number, slot_index, leg)`. No Alembic — wiped `gtrmy.db` and reseeded.
+
+**Frontend (`types.ts`, `TaskPlannerPage.tsx`):** `TaskAssignment.leg` added; non-`"BOTH"` slots show an ARR/DEP badge and sort arrival-leg slots before departure-leg slots within a turnaround card.
+
+**Verified on 2026-06-20** via solve-all + persisted-assignment inspection: all 6 jobs finished `0hard`. The 5 long turnarounds (IDs 88, 74, 30, 90, 77) all split into ARRIVAL/DEPARTURE legs; 4 of 5 were staffed by genuinely different teams per leg (e.g. TA 77: Team 4 covers arrival, Team 6 covers departure). `/validate` found 0 double-booking conflicts involving any of the split turnarounds (the 36 double-booking + 50 travel-gap conflicts it did find are pre-existing soft-constraint noise unrelated to this change, confirmed by `turnaround_id` not matching any of the 5). Reset `gtrmy.db` to a clean seed and restarted the dev server afterward.
+
+**Status:** Complete.

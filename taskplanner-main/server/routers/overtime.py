@@ -6,14 +6,14 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from models.db_models import EntryType, MonthlyRoster, OTStatus, OTVolunteer, Role, RosterEntry, Staff
+from models.db_models import EntryType, MonthlyRoster, OTStatus, OTVolunteer, Role, RosterEntry, Shift, Staff
 from models.schemas import OTVolunteerCreate, OTVolunteerOut
 from routers.auth import require_admin
 
 router = APIRouter(prefix="/api/overtime", tags=["overtime"], dependencies=[Depends(require_admin)])
 
-MAX_OT_SLOTS = 6          # H7: max 6 volunteers pulled per day
-MIN_REST_HOURS = 10       # H9: minimum rest before OT can start
+MAX_OT_SLOTS_PER_SHIFT = 6   # H7: max 6 volunteers pulled per shift per day
+MIN_REST_HOURS = 10          # H9: minimum rest before OT can start
 
 
 def _time_to_minutes(t: str) -> int:
@@ -55,6 +55,10 @@ async def signup_volunteer(payload: OTVolunteerCreate, db: AsyncSession = Depend
     if not staff:
         raise HTTPException(404, "Staff not found or inactive.")
 
+    shift = (await db.execute(select(Shift).where(Shift.id == payload.shift_id))).scalar_one_or_none()
+    if not shift:
+        raise HTTPException(404, "Shift not found.")
+
     # Prevent duplicate signup
     duplicate = (await db.execute(
         select(OTVolunteer).where(
@@ -92,26 +96,37 @@ async def signup_volunteer(payload: OTVolunteerCreate, db: AsyncSession = Depend
     if prev_entry and prev_entry.shift:
         prev_effective = prev_entry.actual_entry_type if prev_entry.actual_entry_type is not None else prev_entry.entry_type
         if prev_effective == EntryType.ON_DUTY:
-            shift_end_min = _time_to_minutes(prev_entry.shift.start_time) + prev_entry.shift.duration_hours * 60
-            rest_hours = max(0, 1440 - shift_end_min) / 60
+            # Rest is measured against the actual start time of the requested OT
+            # shift, not midnight — a prev-day shift ending at 11:00 leaves 12h
+            # of rest before a 23:00 OT start, even though its raw end-of-shift
+            # minute count (start + duration) spills past 1440 into `payload.date`.
+            prev_shift_end_min = (
+                _time_to_minutes(prev_entry.shift.start_time) + prev_entry.shift.duration_hours * 60
+            )
+            ot_start_min = _time_to_minutes(shift.start_time)
+            rest_hours = (ot_start_min + 1440 - prev_shift_end_min) / 60
             if rest_hours < MIN_REST_HOURS:
                 raise HTTPException(
                     400,
                     f"{staff.name} finishes a shift the day before {payload.date} with only "
-                    f"~{rest_hours:.1f}h rest before midnight — needs at least {MIN_REST_HOURS}h rest before OT.",
+                    f"~{max(0, rest_hours):.1f}h rest before the {shift.code} OT shift starts — needs at least "
+                    f"{MIN_REST_HOURS}h rest before OT.",
                 )
 
-    # H7: max 6 OT slots/day (count PENDING + APPROVED for that date)
+    # H7: max 6 OT slots per shift per day (count PENDING + APPROVED for that date+shift)
     active_count = (await db.execute(
         select(func.count()).where(
             OTVolunteer.date == payload.date,
+            OTVolunteer.shift_id == payload.shift_id,
             OTVolunteer.status.in_([OTStatus.PENDING, OTStatus.APPROVED]),
         )
     )).scalar()
-    if active_count >= MAX_OT_SLOTS:
-        raise HTTPException(400, f"OT volunteer slots full for {payload.date} (max {MAX_OT_SLOTS}).")
+    if active_count >= MAX_OT_SLOTS_PER_SHIFT:
+        raise HTTPException(
+            400, f"OT volunteer slots full for {shift.code} on {payload.date} (max {MAX_OT_SLOTS_PER_SHIFT})."
+        )
 
-    volunteer = OTVolunteer(staff_id=payload.staff_id, date=payload.date)
+    volunteer = OTVolunteer(staff_id=payload.staff_id, shift_id=payload.shift_id, date=payload.date)
     db.add(volunteer)
     await db.commit()
     await db.refresh(volunteer)

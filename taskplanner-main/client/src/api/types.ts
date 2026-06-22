@@ -68,6 +68,7 @@ export interface Roster {
 export interface OTVolunteer {
   id: number
   staff_id: number
+  shift_id: number
   date: string
   signed_up_at: string
   approved_by: number | null
@@ -138,6 +139,7 @@ export interface Flight {
   bay: string | null
   cargo_weight_tons: number | null
   status: string
+  unfilled_slot_count: number
 }
 
 export interface Turnaround {
@@ -150,6 +152,8 @@ export interface Turnaround {
   ground_time_minutes: number | null
   cargo_weight_tons: number | null
   required_sets: number
+  arrival_required_sets: number
+  departure_required_sets: number
   arrival_flight: Flight | null
   departure_flight: Flight | null
 }
@@ -161,6 +165,7 @@ export interface TaskAssignment {
   task_role: TaskRole
   set_number: number
   slot_index: number
+  leg: 'BOTH' | 'ARRIVAL' | 'DEPARTURE'
   staff_id: number | null
   source: AssignmentSource
   staff_name: string | null
@@ -233,6 +238,7 @@ export interface FlightImpact {
 export interface StaffTask {
   assignment_id: number
   turnaround_id: number
+  leg: 'BOTH' | 'ARRIVAL' | 'DEPARTURE'
   task_role: TaskRole
   set_number: number
   slot_index: number

@@ -14,6 +14,9 @@ import {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
+// Mirrors LONG_TURNAROUND_THRESHOLD_MIN in server/solver/task_constraints.py
+const LONG_TURNAROUND_THRESHOLD_MIN = 55
+
 const ROLE_ORDER: TaskRole[] = ['RLS', 'TOWER', 'DRIVER', 'LOADER']
 const ROLE_COLORS: Record<TaskRole, string> = {
   RLS:    'bg-indigo-50 text-indigo-700 border-indigo-200',
@@ -88,6 +91,7 @@ export default function TaskPlannerPage() {
   const [date, setDate]             = useState(localDateStr)
   const [jobs, setJobs]             = useState<TeamJob[]>([])
   const [viewTeam, setViewTeam]     = useState<number | ''>('')
+  const [missingOnly, setMissingOnly] = useState(false)
   const [page, setPage]             = useState(1)
   const [validateOpen, setValidateOpen]       = useState(true)
   const [validateMinimized, setValidateMinimized] = useState(false)
@@ -125,13 +129,13 @@ export default function TaskPlannerPage() {
   })
 
   const updateTurnaroundMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: { cargo_weight_tons?: number | null; required_sets?: number } }) =>
+    mutationFn: ({ id, data }: { id: number; data: { cargo_weight_tons?: number | null; required_sets?: number; arrival_required_sets?: number; departure_required_sets?: number } }) =>
       updateTurnaround(id, data),
   })
   // Stable callback identities so memoized TurnaroundCards don't re-render
   // on every unrelated state change (e.g. the 1s job-status poll tick).
   const handleUpdateTA = useCallback(
-    (id: number, data: { cargo_weight_tons?: number | null; required_sets?: number }) =>
+    (id: number, data: { cargo_weight_tons?: number | null; required_sets?: number; arrival_required_sets?: number; departure_required_sets?: number }) =>
       updateTurnaroundMutation.mutate({ id, data }),
     [updateTurnaroundMutation],
   )
@@ -201,6 +205,7 @@ export default function TaskPlannerPage() {
     setDate(d)
     setJobs([])
     setViewTeam('')
+    setMissingOnly(false)
     setPage(1)
     validateMutation.reset()
     setValidateOpen(true)
@@ -234,10 +239,16 @@ export default function TaskPlannerPage() {
 
   // Filter turnarounds by viewing team if selected — each turnaround's
   // assignments carry the team_id that planned them, so filter directly
-  // off that rather than re-fetching assignments per team.
-  const visibleTurnarounds = viewTeam
-    ? turnarounds.filter(ta => (assignmentsByTA[ta.id] ?? []).some(a => a.team_id === Number(viewTeam)))
-    : turnarounds
+  // off that rather than re-fetching assignments per team. "Missing slots
+  // only" further narrows to turnarounds with at least one unassigned slot
+  // in their current plan (turnarounds with no plan yet have no
+  // assignments at all, so they don't count as "missing" here).
+  const visibleTurnarounds = turnarounds.filter(ta => {
+    const taAssignments = assignmentsByTA[ta.id] ?? []
+    if (viewTeam && !taAssignments.some(a => a.team_id === Number(viewTeam))) return false
+    if (missingOnly && !taAssignments.some(a => !a.staff_id)) return false
+    return true
+  })
 
   const totalPages = Math.max(1, Math.ceil(visibleTurnarounds.length / PAGE_SIZE))
   const currentPage = Math.min(page, totalPages)
@@ -456,16 +467,41 @@ export default function TaskPlannerPage() {
           </div>
 
           <div className="space-y-3">
-            {pagedTurnarounds.map(ta => (
-              <TurnaroundCard
-                key={ta.id}
-                turnaround={ta}
-                assignments={assignmentsByTA[ta.id] ?? []}
-                staff={staff}
-                onUpdateTA={handleUpdateTA}
-                onReassign={handleReassign}
-              />
-            ))}
+            {pagedTurnarounds.flatMap(ta => {
+              const taAssignments = assignmentsByTA[ta.id] ?? []
+              // Long turnarounds get split into an ARRIVAL leg and a DEPARTURE
+              // leg, each worked by a different crew — show them as two
+              // separate task cards instead of one merged card. This is
+              // driven by ground time alone (mirrors is_long_turnaround on
+              // the backend), so the split is visible even before a solve
+              // has produced any task_assignments rows.
+              const isSplit = (ta.ground_time_minutes ?? 0) >= LONG_TURNAROUND_THRESHOLD_MIN
+
+              if (!isSplit) {
+                return [
+                  <TurnaroundCard
+                    key={ta.id}
+                    turnaround={ta}
+                    assignments={taAssignments}
+                    staff={staff}
+                    onUpdateTA={handleUpdateTA}
+                    onReassign={handleReassign}
+                  />,
+                ]
+              }
+
+              return (['ARRIVAL', 'DEPARTURE'] as const).map(leg => (
+                <TurnaroundCard
+                  key={`${ta.id}-${leg}`}
+                  turnaround={ta}
+                  assignments={taAssignments.filter(a => a.leg === leg)}
+                  staff={staff}
+                  onUpdateTA={handleUpdateTA}
+                  onReassign={handleReassign}
+                  legFilter={leg}
+                />
+              ))
+            })}
           </div>
         </>
       )}
@@ -537,21 +573,36 @@ const TurnaroundCard = memo(function TurnaroundCard({
   staff,
   onUpdateTA,
   onReassign,
+  legFilter,
 }: {
   turnaround: Turnaround
   assignments: TaskAssignment[]
   staff: Staff[]
-  onUpdateTA: (id: number, d: { cargo_weight_tons?: number | null; required_sets?: number }) => void
+  onUpdateTA: (id: number, d: { cargo_weight_tons?: number | null; required_sets?: number; arrival_required_sets?: number; departure_required_sets?: number }) => void
   onReassign: (assignmentId: number, staffId: number | null) => void
+  legFilter?: 'ARRIVAL' | 'DEPARTURE'
 }) {
-  const arr = ta.arrival_flight
-  const dep = ta.departure_flight
+  // When split into separate arrival/departure leg cards, each card only
+  // concerns its own flight leg — show that leg's flight, hide the other.
+  const arr = legFilter === 'DEPARTURE' ? null : ta.arrival_flight
+  const dep = legFilter === 'ARRIVAL' ? null : ta.departure_flight
+  // Arrival and departure cargo can differ, so each leg's required loader
+  // sets are driven by that leg's own flight cargo, not a shared value.
+  const legCargo = legFilter === 'ARRIVAL' ? ta.arrival_flight?.cargo_weight_tons ?? null
+    : legFilter === 'DEPARTURE' ? ta.departure_flight?.cargo_weight_tons ?? null
+    : null
+  const legRequiredSets = legFilter === 'ARRIVAL' ? ta.arrival_required_sets
+    : legFilter === 'DEPARTURE' ? ta.departure_required_sets
+    : ta.required_sets
   const aircraftType = arr?.aircraft_type ?? dep?.aircraft_type ?? 'A320'
   const groundTime = ta.ground_time_minutes
   const groundUrgency = groundTime == null ? null
     : groundTime < 30 ? 'tight' : groundTime < 45 ? 'normal' : 'relaxed'
 
+  const LEG_ORDER: Record<string, number> = { BOTH: 0, ARRIVAL: 0, DEPARTURE: 1 }
   const sorted = [...assignments].sort((a, b) => {
+    const li = LEG_ORDER[a.leg] - LEG_ORDER[b.leg]
+    if (li !== 0) return li
     const ri = ROLE_ORDER.indexOf(a.task_role) - ROLE_ORDER.indexOf(b.task_role)
     if (ri !== 0) return ri
     if (a.set_number !== b.set_number) return a.set_number - b.set_number
@@ -574,6 +625,13 @@ const TurnaroundCard = memo(function TurnaroundCard({
             </div>
             <span className="text-base">{ta.aircraft_registration ?? 'Unknown Reg'}</span>
             <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700">{aircraftType}</span>
+            {legFilter && (
+              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                legFilter === 'ARRIVAL' ? 'bg-sky-100 text-sky-800' : 'bg-orange-100 text-orange-800'
+              }`}>
+                {legFilter === 'ARRIVAL' ? 'Arrival Leg' : 'Departure Leg'}
+              </span>
+            )}
             {sorted.length > 0 && (
               <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
                 unfilled === 0 ? 'bg-emerald-100 text-emerald-700' :
@@ -610,32 +668,53 @@ const TurnaroundCard = memo(function TurnaroundCard({
                 <MapPin size={12} className="text-slate-400" /> Bay {dep.bay}
               </span>
             )}
-            {ta.cargo_weight_tons != null && (
+            {(legFilter ? legCargo : ta.cargo_weight_tons) != null && (
               <span className="flex items-center gap-1 pl-1.5 pr-2 py-1 rounded-md bg-slate-50 border border-slate-200 text-slate-600 font-medium">
-                <Package size={12} className="text-slate-400" /> {ta.cargo_weight_tons}t
+                <Package size={12} className="text-slate-400" /> {legFilter ? legCargo : ta.cargo_weight_tons}t
               </span>
             )}
           </div>
         </div>
         <div className="flex items-center gap-3 text-xs">
-          <label className="flex items-center gap-1 text-slate-600">
-            Cargo (t):
-            <input
-              type="number" step="0.1" min="0"
-              className="border rounded px-2 py-0.5 w-20 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200"
-              defaultValue={ta.cargo_weight_tons ?? ''}
-              onBlur={e => onUpdateTA(ta.id, { cargo_weight_tons: e.target.value ? Number(e.target.value) : null })}
-            />
-          </label>
-          <label className="flex items-center gap-1 text-slate-600">
-            Sets:
-            <input
-              type="number" min="1" max="3"
-              className="border rounded px-2 py-0.5 w-12 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200"
-              defaultValue={ta.required_sets}
-              onBlur={e => onUpdateTA(ta.id, { required_sets: Number(e.target.value) })}
-            />
-          </label>
+          {legFilter ? (
+            <>
+              <span className="flex items-center gap-1 text-slate-600">
+                Cargo (t): <span className="font-medium text-slate-800">{legCargo ?? '—'}</span>
+              </span>
+              <label className="flex items-center gap-1 text-slate-600">
+                Sets:
+                <input
+                  type="number" min="1" max="3"
+                  className="border rounded px-2 py-0.5 w-12 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  defaultValue={legRequiredSets}
+                  onBlur={e => onUpdateTA(ta.id, legFilter === 'ARRIVAL'
+                    ? { arrival_required_sets: Number(e.target.value) }
+                    : { departure_required_sets: Number(e.target.value) })}
+                />
+              </label>
+            </>
+          ) : (
+            <>
+              <label className="flex items-center gap-1 text-slate-600">
+                Cargo (t):
+                <input
+                  type="number" step="0.1" min="0"
+                  className="border rounded px-2 py-0.5 w-20 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  defaultValue={ta.cargo_weight_tons ?? ''}
+                  onBlur={e => onUpdateTA(ta.id, { cargo_weight_tons: e.target.value ? Number(e.target.value) : null })}
+                />
+              </label>
+              <label className="flex items-center gap-1 text-slate-600">
+                Sets:
+                <input
+                  type="number" min="1" max="3"
+                  className="border rounded px-2 py-0.5 w-12 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  defaultValue={legRequiredSets}
+                  onBlur={e => onUpdateTA(ta.id, { required_sets: Number(e.target.value) })}
+                />
+              </label>
+            </>
+          )}
         </div>
       </div>
 
@@ -647,7 +726,14 @@ const TurnaroundCard = memo(function TurnaroundCard({
               className={`border rounded-lg px-3 py-2 text-xs transition hover:scale-[1.02] ${ROLE_COLORS[a.task_role]} ${!a.staff_id ? 'ring-2 ring-red-300 animate-pulse' : ''}`}
             >
               <div className="font-semibold mb-1 flex items-center justify-between">
-                {roleLabel(a.task_role, a.set_number, a.slot_index)}
+                <span className="flex items-center gap-1">
+                  {roleLabel(a.task_role, a.set_number, a.slot_index)}
+                  {!legFilter && a.leg !== 'BOTH' && (
+                    <span className={`text-[9px] px-1 rounded font-bold ${a.leg === 'ARRIVAL' ? 'bg-sky-200 text-sky-800' : 'bg-orange-200 text-orange-800'}`}>
+                      {a.leg === 'ARRIVAL' ? 'ARR' : 'DEP'}
+                    </span>
+                  )}
+                </span>
                 {!a.staff_id && <AlertCircle size={12} className="text-red-500" />}
               </div>
               <select

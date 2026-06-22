@@ -65,7 +65,7 @@ async def get_staff_tasks(
             TaskAssignment.staff_id == staff_id,
             Turnaround.scheduled_date == date,
         )
-        .order_by(Turnaround.id, TaskAssignment.task_role, TaskAssignment.set_number, TaskAssignment.slot_index)
+        .order_by(Turnaround.id, TaskAssignment.leg, TaskAssignment.task_role, TaskAssignment.set_number, TaskAssignment.slot_index)
     )).scalars().all()
 
     result = []
@@ -73,19 +73,26 @@ async def get_staff_tasks(
         t = ta.turnaround
         arr = t.arrival_flight if t else None
         dep = t.departure_flight if t else None
+        # A split (long) turnaround's ARRIVAL leg and DEPARTURE leg are worked
+        # at different times by potentially different crews — only surface the
+        # flight half relevant to this leg so the two legs render as distinct
+        # entries instead of looking like the same combined flight twice.
+        show_arr = arr if ta.leg != "DEPARTURE" else None
+        show_dep = dep if ta.leg != "ARRIVAL" else None
         result.append(StaffTaskOut(
             assignment_id=ta.id,
             turnaround_id=ta.turnaround_id,
+            leg=ta.leg,
             task_role=ta.task_role,
             set_number=ta.set_number,
             slot_index=ta.slot_index,
             aircraft_registration=t.aircraft_registration if t else None,
             aircraft_type=arr.aircraft_type if arr else (dep.aircraft_type if dep else None),
-            bay=dep.bay if dep else (arr.bay if arr else None),
-            arr_flight_number=arr.flight_number if arr else None,
-            arr_time=arr.scheduled_time if arr else None,
-            dep_flight_number=dep.flight_number if dep else None,
-            dep_time=dep.scheduled_time if dep else None,
+            bay=(show_dep.bay if show_dep else None) or (show_arr.bay if show_arr else None),
+            arr_flight_number=show_arr.flight_number if show_arr else None,
+            arr_time=show_arr.scheduled_time if show_arr else None,
+            dep_flight_number=show_dep.flight_number if show_dep else None,
+            dep_time=show_dep.scheduled_time if show_dep else None,
             ground_time_minutes=t.ground_time_minutes if t else None,
         ))
     return result

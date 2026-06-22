@@ -19,7 +19,7 @@ from models.schemas import (
     TaskSolveRequest, TaskSolverStatusOut, TaskValidationOut,
 )
 from routers.auth import require_admin
-from solver.task_constraints import _prep_buffer_minutes
+from solver.task_constraints import _prep_buffer_minutes, _slot_window, is_long_turnaround
 from solver.task_solver_manager import get_task_job, start_task_solve, stop_task_job
 
 router = APIRouter(prefix="/api/task-planner", tags=["task-planner"], dependencies=[Depends(require_admin)])
@@ -35,13 +35,23 @@ def _bay_sector(bay: str | None) -> str:
     return bay[0].upper() if bay and bay[0].isalpha() else ""
 
 
-def _break_window(shift_start: int, shift_end: int) -> tuple[int, int]:
-    """Return (break_start, break_end) minutes from midnight for the meal break.
-    Break is centred at mid-shift ± 30 min."""
+def _break_windows(shift_start: int, shift_end: int) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Return ((tea_start, tea_end), (meal_start, meal_end)) minutes from
+    midnight for the two planned breaks.
+
+    Placed at 1/3 and 2/3 of the way through the shift, rather than both
+    centred on the same mid-shift point, so the two breaks land roughly a
+    third of the shift apart — by construction, never close enough to each
+    other to look like one stretched-out break. The tea break is the
+    shorter one (30 min); the meal break is 60 min."""
     spans_midnight = shift_end < shift_start
     duration = (1440 - shift_start + shift_end) if spans_midnight else (shift_end - shift_start)
-    midpoint = (shift_start + duration // 2) % 1440
-    return (midpoint - 30) % 1440, (midpoint + 30) % 1440
+    tea_mid = (shift_start + duration // 3) % 1440
+    meal_mid = (shift_start + 2 * duration // 3) % 1440
+    return (
+        ((tea_mid - 15) % 1440, (tea_mid + 15) % 1440),
+        ((meal_mid - 30) % 1440, (meal_mid + 30) % 1440),
+    )
 
 
 def _in_break_window(sta_min: int, std_min: int, bw_start: int, bw_end: int) -> bool:
@@ -56,9 +66,10 @@ def _in_break_window(sta_min: int, std_min: int, bw_start: int, bw_end: int) -> 
         return work_start < bw_end or work_end > bw_start
 
 
-def _break_half(sta_min: int, bw_start: int) -> int:
-    """Returns 0 if sta falls in first 30-min half of break window, 1 otherwise."""
-    bw_mid = (bw_start + 30) % 1440
+def _break_half(sta_min: int, bw_start: int, bw_end: int) -> int:
+    """Returns 0 if sta falls in the first half of the break window, 1 otherwise."""
+    half_width = ((bw_end - bw_start) % 1440) // 2
+    bw_mid = (bw_start + half_width) % 1440
     if bw_start <= bw_mid:          # normal (no midnight crossing)
         return 0 if sta_min < bw_mid else 1
     # bw_mid crosses midnight (bw_start near 23:30)
@@ -91,6 +102,11 @@ async def _build_plan_data(
         sta_min = _time_to_minutes(arr.scheduled_time) if arr else 0
         std_min = _time_to_minutes(dep.scheduled_time) if dep else sta_min + 45
         bay = (dep.bay if dep else None) or (arr.bay if arr else None) or ""
+        # Long turnarounds (e.g. a maintenance hold) get staffed by a
+        # separate arrival crew and departure crew, which can land in two
+        # different shift windows below — short ones stay a single "BOTH"
+        # unit worked by whichever crew is on duty at STA.
+        default_legs = ["ARRIVAL", "DEPARTURE"] if is_long_turnaround(sta_min, std_min) else ["BOTH"]
         turnaround_facts.append({
             "id": ta.id,
             "aircraft_registration": ta.aircraft_registration or "",
@@ -99,9 +115,13 @@ async def _build_plan_data(
             "sta_minutes": sta_min,
             "std_minutes": std_min,
             "required_sets": ta.required_sets,
+            "arrival_required_sets": ta.arrival_required_sets,
+            "departure_required_sets": ta.departure_required_sets,
             "bay": bay,
             "bay_sector": _bay_sector(bay),
-            "break_half": -1,           # filled in after shift window is known
+            "meal_break_half": -1,      # filled in after shift window is known
+            "tea_break_half": -1,
+            "legs": default_legs,
         })
 
     # Get on-duty staff for team+date via effective_entry_type
@@ -165,36 +185,65 @@ async def _build_plan_data(
         planning_end = exclusive_until_min if exclusive_until_min is not None else shift_end_min
         spans_midnight_plan = planning_end < planning_start
 
-        def _in_shift_window(sta_min: int) -> bool:
+        def _in_shift_window(minute: int) -> bool:
             if spans_midnight_plan:
-                return sta_min >= planning_start or sta_min < planning_end
-            return planning_start <= sta_min < planning_end
+                return minute >= planning_start or minute < planning_end
+            return planning_start <= minute < planning_end
 
-        turnaround_facts = [t for t in turnaround_facts if _in_shift_window(t["sta_minutes"])]
-
-        # Break window uses full shift (not exclusive) — this is a staff-welfare concern
-        bw_start, bw_end = _break_window(shift_start_min, shift_end_min)
+        # For a "BOTH" (non-split) turnaround, only its arrival time decides
+        # which window it belongs to — unchanged from before. For a split
+        # long turnaround, the arrival leg and departure leg are evaluated
+        # independently against STA/STD respectively, since they may fall
+        # into two different (even non-adjacent) shift windows/teams.
         for t in turnaround_facts:
-            if _in_break_window(t["sta_minutes"], t["std_minutes"], bw_start, bw_end):
-                t["break_half"] = _break_half(t["sta_minutes"], bw_start)
-            else:
-                t["break_half"] = -1
+            relevant = []
+            for leg in t["legs"]:
+                if leg == "BOTH" and _in_shift_window(t["sta_minutes"]):
+                    relevant.append(leg)
+                elif leg == "ARRIVAL" and _in_shift_window(t["sta_minutes"]):
+                    relevant.append(leg)
+                elif leg == "DEPARTURE" and _in_shift_window(t["std_minutes"]):
+                    relevant.append(leg)
+            t["legs"] = relevant
+        turnaround_facts = [t for t in turnaround_facts if t["legs"]]
 
-        in_bw = sum(1 for t in turnaround_facts if t["break_half"] >= 0)
+        # Break windows use the full shift (not exclusive) — this is a
+        # staff-welfare concern, not a planning-window one.
+        (tea_start, tea_end), (meal_start, meal_end) = _break_windows(shift_start_min, shift_end_min)
+        for t in turnaround_facts:
+            if _in_break_window(t["sta_minutes"], t["std_minutes"], tea_start, tea_end):
+                t["tea_break_half"] = _break_half(t["sta_minutes"], tea_start, tea_end)
+            else:
+                t["tea_break_half"] = -1
+            if _in_break_window(t["sta_minutes"], t["std_minutes"], meal_start, meal_end):
+                t["meal_break_half"] = _break_half(t["sta_minutes"], meal_start, meal_end)
+            else:
+                t["meal_break_half"] = -1
+
+        in_tea = sum(1 for t in turnaround_facts if t["tea_break_half"] >= 0)
+        in_meal = sum(1 for t in turnaround_facts if t["meal_break_half"] >= 0)
         print(
             f"[task-planner] team={team_id} "
             f"shift={shift_start_min//60:02d}:{shift_start_min%60:02d}"
             f"-{shift_end_min//60:02d}:{shift_end_min%60:02d} "
             f"planning_window={planning_start//60:02d}:{planning_start%60:02d}"
             f"-{planning_end//60:02d}:{planning_end%60:02d} "
-            f"— {len(turnaround_facts)} TAs in window, {in_bw} in break window "
-            f"({bw_start//60:02d}:{bw_start%60:02d}-{bw_end//60:02d}:{bw_end%60:02d})"
+            f"— {len(turnaround_facts)} TAs in window, {in_tea} in tea window "
+            f"({tea_start//60:02d}:{tea_start%60:02d}-{tea_end//60:02d}:{tea_end%60:02d}), "
+            f"{in_meal} in meal window "
+            f"({meal_start//60:02d}:{meal_start%60:02d}-{meal_end//60:02d}:{meal_end%60:02d})"
         )
 
-    # If replanning from a specific time, only include upcoming turnarounds
+    # If replanning from a specific time, only include upcoming turnarounds —
+    # for a split turnaround with only its departure leg still pending,
+    # compare against STD rather than the (already-passed) STA.
     if from_time_minutes is not None:
         before = len(turnaround_facts)
-        turnaround_facts = [t for t in turnaround_facts if t["sta_minutes"] >= from_time_minutes]
+        def _is_upcoming(t: dict) -> bool:
+            if t["legs"] == ["DEPARTURE"]:
+                return t["std_minutes"] >= from_time_minutes
+            return t["sta_minutes"] >= from_time_minutes
+        turnaround_facts = [t for t in turnaround_facts if _is_upcoming(t)]
         print(f"[task-planner] replan from {from_time_minutes//60:02d}:{from_time_minutes%60:02d} — {len(turnaround_facts)}/{before} TAs are upcoming")
 
     if not turnaround_facts:
@@ -283,6 +332,7 @@ async def _persist_assignments(job, team_id: int):
             "task_role": TaskRole(slot.task_role),
             "set_number": slot.set_number,
             "slot_index": slot.slot_index,
+            "leg": slot.leg,
             "staff_id": slot.staff.id if slot.staff else None,
             "source": AssignmentSource.SOLVER,
         }
@@ -299,7 +349,7 @@ async def _persist_assignments(job, team_id: int):
         # time (see start_all_teams_solver's per-team + pooled-overlap jobs).
         stmt = sqlite_insert(TaskAssignment).values(rows)
         stmt = stmt.on_conflict_do_update(
-            index_elements=["turnaround_id", "task_role", "set_number", "slot_index"],
+            index_elements=["turnaround_id", "task_role", "set_number", "slot_index", "leg"],
             set_={
                 "staff_id": stmt.excluded.staff_id,
                 "source": stmt.excluded.source,
@@ -341,18 +391,31 @@ async def start_all_teams_solver(
     """Start a solve job for every on-duty team.
 
     Phase 1 — collect active teams and their shift start/end times.
-    Phase 2 — sort by shift start and, per adjacent pair, carve out any
-               overlap (e.g. one shift ends 15:00, the next starts 11:00 —
-               both teams are on duty 11:00-15:00) from BOTH teams' own
-               exclusive windows entirely, rather than splitting it in half
-               between them. Splitting in half used to leave each team
-               covering its slice of the shared time alone with only its
-               own (often certification-scarce) headcount — exactly when
-               both teams' staff are actually on duty and available.
-    Phase 3 — plan each team's own exclusive window with just its own staff,
-               then plan each overlap window separately as a joint job that
-               pools both teams' certified staff together.
+    Phase 2 — sweep-line over every active team's [start, end) shift
+               interval to partition the day into segments by exactly which
+               set of teams is on duty in each one. This handles 3+-way
+               overlaps correctly (e.g. S1∩S2 = 11:00-15:00 and S2∩S3 =
+               14:30-23:00 themselves overlap in 14:30-15:00, which needs a
+               genuine 3-team pooled job there) — an earlier version only
+               compared each team against its immediate neighbor, which for
+               a sandwiched team produced an inverted window (window_start
+               after exclusive_until) that downstream midnight-wrap logic
+               misread as "nearly the whole day", handing that one team
+               most of the day's turnarounds to staff alone.
+    Phase 3 — plan and launch one job per segment: a single team's own
+               headcount where exactly one team is on duty, or a pooled job
+               across every team on duty in that segment otherwise. The
+               night→morning shift handoff (e.g. S4 23:00-11:00 back to
+               S1 05:00-15:00) is deliberately exempted from pooling — the
+               incoming day team's own exclusive job already covers those
+               shared hours with its own headcount (pooling it instead
+               empirically made results worse, not better).
     """
+    replan_from_minutes: int | None = None
+    if payload.replan_from_time:
+        h, m = payload.replan_from_time.split(":")
+        replan_from_minutes = int(h) * 60 + int(m)
+
     all_teams = (await db.execute(select(Team).order_by(Team.code))).scalars().all()
     if not all_teams:
         raise HTTPException(422, "No teams found in database.")
@@ -402,7 +465,7 @@ async def start_all_teams_solver(
             f"No teams have on-duty staff for {payload.date}. Check rosters and ensure flights are fetched first.",
         )
 
-    # Phase 2 — carve out overlaps into separate joint windows ────────────────
+    # Phase 2 — partition the day into on-duty segments ───────────────────────
     # Sort ascending by shift start.  S4 starts at 23:00 (1380) → naturally last.
     active.sort(key=lambda td: td["shift_start"])
     n = len(active)
@@ -412,110 +475,72 @@ async def start_all_teams_solver(
     for td in active:
         td["_end_unwrapped"] = td["shift_end"] if td["shift_end"] > td["shift_start"] else td["shift_end"] + 1440
 
-    overlap_jobs: list[dict] = []   # {team_a, team_b, window_start, exclusive_until}
+    if n > 1:
+        # Night→morning handoff: cap the last (by start time) team's interval
+        # at the first team's start time so the sweep below doesn't try to
+        # pool that boundary — see the docstring above.
+        active[-1]["_end_unwrapped"] = min(
+            active[-1]["_end_unwrapped"], active[0]["shift_start"] + 1440
+        )
 
-    for i, td in enumerate(active):
-        if n == 1:
-            td["exclusive_until"] = td["shift_end"]
+    intervals = [(td["shift_start"], td["_end_unwrapped"], idx) for idx, td in enumerate(active)]
+    boundaries = sorted({s for s, _, _ in intervals} | {e for _, e, _ in intervals})
+
+    segments: list[tuple[int, int, tuple[int, ...]]] = []
+    for a, b in zip(boundaries, boundaries[1:]):
+        if a >= b:
             continue
-        nxt = active[(i + 1) % n]
-        if i == n - 1:
-            # Last→first wraparound (e.g. night shift S4 handing off to the
-            # next morning's S1): keep the old simple handoff here. Pooling
-            # this boundary too pulls time away from whichever team starts
-            # the day, which empirically made things worse, not better —
-            # and "today's" date attribution of an overnight shift's early-
-            # morning hours is already a separate ambiguity of its own.
-            td["exclusive_until"] = nxt["shift_start"]
-            continue
-        end_i = td["_end_unwrapped"]
-        start_next = nxt["shift_start"]
-        if start_next >= end_i:
-            td["exclusive_until"] = end_i % 1440   # gap or exact handoff — nothing shared
+        mid = (a + b) / 2
+        on_duty = tuple(sorted(idx for s, e, idx in intervals if s <= mid < e))
+        if on_duty:
+            segments.append((a, b, on_duty))
+
+    # Merge adjacent segments that ended up with an identical on-duty set.
+    merged: list[tuple[int, int, tuple[int, ...]]] = []
+    for a, b, team_idxs in segments:
+        if merged and merged[-1][2] == team_idxs and merged[-1][1] == a:
+            merged[-1] = (merged[-1][0], b, team_idxs)
         else:
-            # Overlap — exclude it from both teams' own exclusive windows;
-            # it gets one joint solve with both teams' staff pooled instead.
-            td["exclusive_until"] = start_next % 1440
-            nxt["_window_start"] = end_i % 1440
-            overlap_jobs.append({
-                "team_a": td["team"], "team_b": nxt["team"],
-                "window_start": start_next % 1440, "exclusive_until": end_i % 1440,
-            })
+            merged.append((a, b, team_idxs))
 
-    # Phase 3 — plan and launch each team's own exclusive window ──────────────
+    # Phase 3 — plan and launch one job per segment ───────────────────────────
     results = []
-    for td in active:
-        team = td["team"]
-        excl = td["exclusive_until"]
-        win_start = td.get("_window_start") if td.get("_window_start") is not None else td["shift_start"]
+    for win_start, excl, team_idxs in merged:
+        teams = [active[i]["team"] for i in team_idxs]
+        primary, *extras = teams
+        label = "+".join(t.code for t in teams)
+        ws_disp, excl_disp = win_start % 1440, excl % 1440
+        kind = "exclusive" if not extras else "pooled"
         print(
-            f"[solve-all] {team.code}: exclusive window "
-            f"{win_start//60:02d}:{win_start%60:02d}–"
-            f"{excl//60:02d}:{excl%60:02d} (own shift "
-            f"{td['shift_start']//60:02d}:{td['shift_start']%60:02d}–"
-            f"{td['shift_end']//60:02d}:{td['shift_end']%60:02d})"
+            f"[solve-all] {label}: {kind} window "
+            f"{ws_disp // 60:02d}:{ws_disp % 60:02d}–{excl_disp // 60:02d}:{excl_disp % 60:02d}"
         )
-        if win_start == excl:
-            print(f"[solve-all] {team.code}: zero-length exclusive window — fully overlapped, skipped")
-            continue
         try:
             plan_data = await _build_plan_data(
-                team.id, payload.date, db,
-                exclusive_until_min=excl,
-                window_start_min=win_start,
+                primary.id, payload.date, db,
+                from_time_minutes=replan_from_minutes,
+                exclusive_until_min=excl_disp,
+                window_start_min=ws_disp,
+                extra_team_ids=[t.id for t in extras] or None,
             )
         except HTTPException as exc:
-            print(f"[solve-all] {team.code}: skipped — {exc.detail}")
+            print(f"[solve-all] {label}: skipped — {exc.detail}")
             continue
         except Exception as exc:
-            print(f"[solve-all] {team.code}: error building plan — {exc}")
+            print(f"[solve-all] {label}: error building plan — {exc}")
             continue
 
         job_id = await start_task_solve(
-            team.id, payload.date.isoformat(), plan_data,
-            on_complete=lambda job, _team_id=team.id: _persist_assignments(job, _team_id),
+            primary.id, payload.date.isoformat(), plan_data,
+            on_complete=lambda job, _team_id=primary.id: _persist_assignments(job, _team_id),
         )
 
         results.append(TaskSolverStatusOut(
             job_id=job_id,
-            team_id=team.id,
+            team_id=primary.id,
             date=payload.date.isoformat(),
             status="SOLVING",
-        ))
-
-    # Phase 3b — plan and launch each overlap window with pooled staff ────────
-    for ov in overlap_jobs:
-        team_a, team_b = ov["team_a"], ov["team_b"]
-        win_start, excl = ov["window_start"], ov["exclusive_until"]
-        print(
-            f"[solve-all] {team_a.code}+{team_b.code}: pooled overlap window "
-            f"{win_start//60:02d}:{win_start%60:02d}–{excl//60:02d}:{excl%60:02d}"
-        )
-        try:
-            plan_data = await _build_plan_data(
-                team_a.id, payload.date, db,
-                exclusive_until_min=excl,
-                window_start_min=win_start,
-                extra_team_ids=[team_b.id],
-            )
-        except HTTPException as exc:
-            print(f"[solve-all] {team_a.code}+{team_b.code}: skipped — {exc.detail}")
-            continue
-        except Exception as exc:
-            print(f"[solve-all] {team_a.code}+{team_b.code}: error building plan — {exc}")
-            continue
-
-        job_id = await start_task_solve(
-            team_a.id, payload.date.isoformat(), plan_data,
-            on_complete=lambda job, _team_id=team_a.id: _persist_assignments(job, _team_id),
-        )
-
-        results.append(TaskSolverStatusOut(
-            job_id=job_id,
-            team_id=team_a.id,
-            date=payload.date.isoformat(),
-            status="SOLVING",
-            pooled_with_team_id=team_b.id,
+            pooled_with_team_id=extras[0].id if extras else None,
         ))
 
     if not results:
@@ -645,12 +670,17 @@ async def validate_assignments(
         std = _time_to_minutes(dep.scheduled_time) if dep else sta + 45
         bay = (dep.bay if dep else None) or (arr.bay if arr else None) or ""
         role = row.task_role.value if hasattr(row.task_role, "value") else str(row.task_role)
+        # Key by (turnaround, leg) — a long turnaround split into an arrival
+        # crew and departure crew has two genuinely separate working windows,
+        # not one collapsed span, even when worked by the same staff member.
+        key = (ta.id, row.leg)
         windows = by_staff.setdefault(row.staff_id, {})
-        if ta.id not in windows:
-            windows[ta.id] = {
+        if key not in windows:
+            win_start, win_end = _slot_window(role, row.leg, sta, std)
+            windows[key] = {
                 "turnaround_id": ta.id,
-                "window_start": sta - _prep_buffer_minutes(role),
-                "window_end": std,
+                "window_start": win_start,
+                "window_end": win_end,
                 "bay": bay,
                 "role": role,
                 "assignment_id": row.id,
@@ -658,7 +688,7 @@ async def validate_assignments(
                 "reg": ta.aircraft_registration or (arr.flight_number if arr else "") or "?",
             }
         else:
-            windows[ta.id]["assignment_id"] = min(windows[ta.id]["assignment_id"], row.id)
+            windows[key]["assignment_id"] = min(windows[key]["assignment_id"], row.id)
 
     conflicts: list[AssignmentConflictOut] = []
     for staff_id, ta_map in by_staff.items():

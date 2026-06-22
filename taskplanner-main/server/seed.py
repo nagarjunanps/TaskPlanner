@@ -174,8 +174,18 @@ async def seed():
                     status=CertStatus.ACTIVE,
                 ))
 
-            # First 16 RAs get GSE_DRIVING (vary expiry for demo)
-            for i, s in enumerate(ra_staff[:16]):
+            # GSE_DRIVING: RA[0:32]. TOWER_OPS: RA[8:40]. The two ranges
+            # overlap on RA[8:32] (24 dual-certified) — those staff can cover
+            # either a DRIVER or a TOWER slot depending on which is short
+            # that day. Union covers all 40 RA, so every solo (non-pooled)
+            # shift-edge window — where only one team's own staff are on
+            # duty, with no neighboring team's certified pool to draw on —
+            # still has full driver/tower coverage instead of relying on
+            # whichever staff happen to be on duty from a ~60%-covered pool.
+            driver_range = ra_staff[0:32]
+            tower_range = ra_staff[8:40]
+
+            for i, s in enumerate(driver_range):
                 if i == 4:
                     expiry = today + timedelta(days=30)   # EXPIRING_SOON
                     status = CertStatus.EXPIRING_SOON
@@ -193,8 +203,7 @@ async def seed():
                     status=status,
                 ))
 
-            # Next 16 RAs (indices 16-31) get TOWER_OPS
-            for i, s in enumerate(ra_staff[16:32]):
+            for i, s in enumerate(tower_range):
                 if i == 4:
                     expiry = today + timedelta(days=45)
                     status = CertStatus.EXPIRING_SOON
@@ -211,7 +220,9 @@ async def seed():
                     expiry_date=expiry,
                     status=status,
                 ))
-            print(f"Seeded certifications for {team.code}.")
+            print(f"Seeded certifications for {team.code} "
+                  f"({len(driver_range)} driver, {len(tower_range)} tower, "
+                  f"{len(set(s.id for s in driver_range) & set(s.id for s in tower_range))} dual-certified).")
 
         await db.commit()
     print("Seed complete.")

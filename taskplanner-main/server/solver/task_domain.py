@@ -43,12 +43,19 @@ class TurnaroundFact:
     # Minutes from midnight (int) to avoid JPype date-arithmetic issues
     sta_minutes: int   # STA = scheduled time of arrival
     std_minutes: int   # STD = scheduled time of departure
-    required_sets: int
+    required_sets: int          # combined/BOTH-leg value, used when not split
+    arrival_required_sets: int = 1
+    departure_required_sets: int = 1
     # Bay and sector info for travel-time and locality constraints
     bay: str = ""           # e.g. "J01", "L12"
     bay_sector: str = ""    # leading letter: "J", "L", "P", "Q"
-    # -1 = outside break window; 0 = first 30 min half; 1 = second 30 min half
-    break_half: int = -1
+    # -1 = outside the window; 0/1 = which staggered half of that break
+    # window this turnaround's work-span falls in. Two independent windows —
+    # a short tea break earlier in the shift and a longer meal break later —
+    # so staff get two genuinely separated rest periods, not one window
+    # split into adjacent halves.
+    tea_break_half: int = -1
+    meal_break_half: int = -1
 
     def __eq__(self, other):
         return isinstance(other, TurnaroundFact) and self.id == other.id
@@ -65,6 +72,11 @@ class RoleSlot:
     task_role: str       # RLS | TOWER | DRIVER | LOADER
     set_number: int      # 0 for RLS/TOWER; 1..required_sets for DRIVER/LOADER
     slot_index: int      # 1 for RLS/TOWER/DRIVER; 1-3 for LOADERs within a set
+    # "BOTH" = one crew covers the whole turnaround (the common case).
+    # "ARRIVAL"/"DEPARTURE" = this slot belongs to one leg of a long
+    # turnaround that's been split into two separate working windows —
+    # see solver.task_constraints.is_long_turnaround().
+    leg: str = "BOTH"
 
     staff: Annotated[
         Optional[TaskStaffFact],

@@ -130,11 +130,13 @@ class BulkEntryUpdate(BaseModel):
 
 class OTVolunteerCreate(BaseModel):
     staff_id: int
+    shift_id: int
     date: date
 
 class OTVolunteerOut(BaseModel):
     id: int
     staff_id: int
+    shift_id: int
     date: date
     signed_up_at: datetime
     approved_by: Optional[int]
@@ -172,6 +174,10 @@ class FlightOut(BaseModel):
     bay: Optional[str] = None
     cargo_weight_tons: Optional[float] = None
     status: str
+    # Unfilled task_assignment slots on this flight's linked turnaround — lets
+    # the Flight Dashboard filter to "missing task slots" without a second
+    # round-trip to the task planner.
+    unfilled_slot_count: int = 0
     model_config = {"from_attributes": True}
 
 class TurnaroundOut(BaseModel):
@@ -184,6 +190,8 @@ class TurnaroundOut(BaseModel):
     ground_time_minutes: Optional[int] = None
     cargo_weight_tons: Optional[float] = None
     required_sets: int
+    arrival_required_sets: int
+    departure_required_sets: int
     arrival_flight: Optional[FlightOut] = None
     departure_flight: Optional[FlightOut] = None
     model_config = {"from_attributes": True}
@@ -191,6 +199,8 @@ class TurnaroundOut(BaseModel):
 class TurnaroundUpdate(BaseModel):
     cargo_weight_tons: Optional[float] = None
     required_sets: Optional[int] = None
+    arrival_required_sets: Optional[int] = None
+    departure_required_sets: Optional[int] = None
 
 class FlightUpdate(BaseModel):
     scheduled_time: Optional[str] = None   # "HH:MM" — use for major retime
@@ -224,6 +234,7 @@ class TaskAssignmentOut(BaseModel):
     task_role: TaskRole
     set_number: int
     slot_index: int
+    leg: str = "BOTH"   # "BOTH" | "ARRIVAL" | "DEPARTURE"
     staff_id: Optional[int] = None
     source: AssignmentSource
     staff_name: Optional[str] = None
@@ -239,6 +250,7 @@ class TaskSolveRequest(BaseModel):
 
 class TaskSolveAllRequest(BaseModel):
     date: date
+    replan_from_time: Optional[str] = None   # "HH:MM" — only plan TAs with STA/STD ≥ this time
 
 class SolveConflictOut(BaseModel):
     """A conflict found by the solver's own in-memory self-check, right after
@@ -311,6 +323,7 @@ class TeamDayUpdate(BaseModel):
 class StaffTaskOut(BaseModel):
     assignment_id: int
     turnaround_id: int
+    leg: str = "BOTH"   # "BOTH" | "ARRIVAL" | "DEPARTURE"
     task_role: TaskRole
     set_number: int
     slot_index: int

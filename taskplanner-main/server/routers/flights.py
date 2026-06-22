@@ -1,7 +1,7 @@
-from datetime import date as DateType
+from datetime import date as DateType, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,9 +10,10 @@ from database import get_db
 from models.db_models import Flight, FlightDirection, Staff, TaskAssignment, Turnaround
 from models.schemas import (
     ConflictInfo, FlightImpactOut, FlightOut, FlightUpdate,
-    TurnaroundOut, TurnaroundUpdate,
+    TaskSolveAllRequest, TurnaroundOut, TurnaroundUpdate,
 )
 from routers.auth import require_admin
+from routers.task_planner import start_all_teams_solver
 from services.flight_data import get_provider
 from services.llm_advisor import analyze_impact
 
@@ -68,6 +69,7 @@ async def get_flights(
             ).on_conflict_do_update(
                 index_elements=["flight_number", "scheduled_date", "direction"],
                 set_={
+                    "scheduled_time": raw["scheduled_time"],
                     "estimated_time": raw.get("estimated_time"),
                     "bay": raw.get("bay"),
                     "cargo_weight_tons": raw.get("cargo_weight_tons"),
@@ -84,7 +86,42 @@ async def get_flights(
         select(Flight).where(Flight.scheduled_date == date, Flight.station == station)
         .order_by(Flight.scheduled_time)
     )).scalars().all()
+
+    await _attach_unfilled_slot_counts(rows, date, station, db)
     return rows
+
+
+async def _attach_unfilled_slot_counts(
+    flights: list[Flight], date: DateType, station: str, db: AsyncSession,
+) -> None:
+    """Set `.unfilled_slot_count` on each flight from its linked turnaround's
+    unassigned task_assignment rows, so the Flight Dashboard can filter to
+    "missing task slots" without a second round-trip to the task planner.
+    A split turnaround's arrival and departure legs share one turnaround
+    row, so both linked flights get the same (turnaround-level) count."""
+    rows = (await db.execute(
+        select(
+            Turnaround.arrival_flight_id,
+            Turnaround.departure_flight_id,
+            func.count(TaskAssignment.id),
+        )
+        .outerjoin(
+            TaskAssignment,
+            (TaskAssignment.turnaround_id == Turnaround.id) & TaskAssignment.staff_id.is_(None),
+        )
+        .where(Turnaround.scheduled_date == date, Turnaround.station == station)
+        .group_by(Turnaround.id)
+    )).all()
+
+    unfilled_by_flight_id: dict[int, int] = {}
+    for arr_id, dep_id, count in rows:
+        if arr_id is not None:
+            unfilled_by_flight_id[arr_id] = count
+        if dep_id is not None:
+            unfilled_by_flight_id[dep_id] = count
+
+    for f in flights:
+        f.unfilled_slot_count = unfilled_by_flight_id.get(f.id, 0)
 
 
 @router.get("/turnarounds", response_model=list[TurnaroundOut])
@@ -116,6 +153,7 @@ async def get_turnarounds(
             ).on_conflict_do_update(
                 index_elements=["flight_number", "scheduled_date", "direction"],
                 set_={
+                    "scheduled_time": raw["scheduled_time"],
                     "estimated_time": raw.get("estimated_time"),
                     "bay": raw.get("bay"),
                     "cargo_weight_tons": raw.get("cargo_weight_tons"),
@@ -138,10 +176,19 @@ async def get_turnarounds(
     for reg in regs:
         arr = arrivals.get(reg)
         dep = departures.get(reg)
-        cargo = (arr.cargo_weight_tons if arr else None) or (dep.cargo_weight_tons if dep else None)
+        arr_cargo = arr.cargo_weight_tons if arr else None
+        dep_cargo = dep.cargo_weight_tons if dep else None
+        # The combined cargo_weight_tons/required_sets shown on a short
+        # (unsplit) turnaround must reflect whichever leg is heavier, since
+        # that's the leg driving the combined required_sets below — showing
+        # the arrival leg's cargo while sets is sized for a heavier
+        # departure leg (or vice versa) would look inconsistent.
+        cargo = max(arr_cargo or 0, dep_cargo or 0) or None
+        arr_required_sets = _required_sets_from_cargo(arr_cargo)
+        dep_required_sets = _required_sets_from_cargo(dep_cargo)
         ground_min: int | None = None
         if arr and dep:
-            ground_min = _time_to_minutes(dep.scheduled_time) - _time_to_minutes(arr.scheduled_time)
+            ground_min = (_time_to_minutes(dep.scheduled_time) - _time_to_minutes(arr.scheduled_time)) % 1440
 
         stmt = sqlite_insert(Turnaround).values(
             scheduled_date=date,
@@ -151,7 +198,9 @@ async def get_turnarounds(
             departure_flight_id=dep.id if dep else None,
             ground_time_minutes=ground_min,
             cargo_weight_tons=cargo,
-            required_sets=_required_sets_from_cargo(cargo),
+            required_sets=max(arr_required_sets, dep_required_sets),
+            arrival_required_sets=arr_required_sets,
+            departure_required_sets=dep_required_sets,
         ).on_conflict_do_update(
             index_elements=["scheduled_date", "station", "aircraft_registration"],
             set_={
@@ -194,6 +243,10 @@ async def update_turnaround(
             ta.required_sets = _required_sets_from_cargo(data["cargo_weight_tons"])
     if "required_sets" in data:
         ta.required_sets = data["required_sets"]
+    if "arrival_required_sets" in data:
+        ta.arrival_required_sets = data["arrival_required_sets"]
+    if "departure_required_sets" in data:
+        ta.departure_required_sets = data["departure_required_sets"]
 
     await db.commit()
     await db.refresh(ta)
@@ -223,7 +276,9 @@ async def update_flight(
     await db.commit()
 
     # Recompute turnaround ground time if a time changed
-    if "scheduled_time" in data or "estimated_time" in data:
+    time_changed = "scheduled_time" in data or "estimated_time" in data
+    bay_changed = "bay" in data
+    if time_changed:
         ta = (await db.execute(
             select(Turnaround)
             .options(selectinload(Turnaround.arrival_flight), selectinload(Turnaround.departure_flight))
@@ -235,8 +290,28 @@ async def update_flight(
         if ta and ta.arrival_flight and ta.departure_flight:
             arr_time = ta.arrival_flight.estimated_time or ta.arrival_flight.scheduled_time
             dep_time = ta.departure_flight.estimated_time or ta.departure_flight.scheduled_time
-            ta.ground_time_minutes = _time_to_minutes(dep_time) - _time_to_minutes(arr_time)
+            ta.ground_time_minutes = (_time_to_minutes(dep_time) - _time_to_minutes(arr_time)) % 1440
             await db.commit()
+
+    # A time or bay change can invalidate existing staffing (timing shifts
+    # task windows; a bay change shifts travel-gap/bay-locality constraints),
+    # so replan automatically rather than waiting for someone to click a
+    # button. Scoped to from-now-onward only (replan_from_time) — never the
+    # whole day, and skipped outright for a flight whose effective time has
+    # already passed (nothing to gain from replanning the past).
+    if time_changed or bay_changed:
+        effective_time = flight.estimated_time or flight.scheduled_time
+        now_hhmm = datetime.now().strftime("%H:%M")
+        if effective_time >= now_hhmm:
+            try:
+                await start_all_teams_solver(
+                    TaskSolveAllRequest(date=flight.scheduled_date, replan_from_time=now_hhmm),
+                    db,
+                )
+            except HTTPException as exc:
+                print(f"[flights] auto-replan skipped for flight {flight_id}: {exc.detail}")
+            except Exception as exc:
+                print(f"[flights] auto-replan failed for flight {flight_id}: {exc}")
 
     await db.refresh(flight)
     return flight

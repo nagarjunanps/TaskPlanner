@@ -47,6 +47,13 @@ def _build_mock_schedule(count: int = 100) -> list[tuple]:
     for i, sta_min in enumerate(sta_pool[:count]):
         ac_type   = rng.choice(ac_types)
         ground    = 30 if ac_type == 'A320' else 35
+        # 1 in 4 turnarounds gets a long ground time (heavy maintenance check,
+        # late cargo, etc.) — long enough (>= the solver's split threshold,
+        # see LONG_TURNAROUND_THRESHOLD_MIN in task_constraints.py) that the
+        # task planner splits arrival/departure staffing across two separate
+        # crews instead of one crew covering the whole stand time.
+        if i % 4 == 0:
+            ground = rng.randint(60, 180)
         std_min   = (sta_min + ground) % 1440
 
         # Unique 9M-XXX registration (no two turnarounds share a plane)
@@ -57,14 +64,21 @@ def _build_mock_schedule(count: int = 100) -> list[tuple]:
 
         bay = f"{sectors[i % 4]}{(i % 31) + 1:02d}"
 
-        # Cargo weight distribution (matches notes: <1.5t=1set, 1.5-10t=2set, >10t=3set)
-        r = rng.random()
-        if r < 0.50:
-            cargo = round(rng.uniform(0.3, 1.4), 1)    # 50% light  → 1 set
-        elif r < 0.85:
-            cargo = round(rng.uniform(1.5, 8.9), 1)    # 35% medium → 2 sets
-        else:
-            cargo = round(rng.uniform(10.0, 12.5), 1)  # 15% heavy  → 3 sets
+        # Cargo weight distribution (matches notes: <1.5t=1set, 1.5-10t=2set, >10t=3set).
+        # Arrival and departure cargo are generated independently — an
+        # aircraft can land light and depart heavy (or vice versa), so each
+        # leg gets its own draw rather than sharing one value.
+        def _draw_cargo() -> float:
+            r = rng.random()
+            if r < 0.50:
+                return round(rng.uniform(0.3, 1.4), 1)    # 50% light  → 1 set
+            elif r < 0.93:
+                return round(rng.uniform(1.5, 8.9), 1)    # 43% medium → 2 sets
+            else:
+                return round(rng.uniform(10.0, 12.5), 1)  # 7% heavy  → 3 sets
+
+        cargo_arr = _draw_cargo()
+        cargo_dep = _draw_cargo()
 
         sta = f"{sta_min // 60:02d}:{sta_min % 60:02d}"
         std = f"{std_min // 60:02d}:{std_min % 60:02d}"
@@ -72,7 +86,7 @@ def _build_mock_schedule(count: int = 100) -> list[tuple]:
         schedule.append((
             f"AK{1000 + i * 2}",   # arrival  flight number
             f"AK{1001 + i * 2}",   # departure flight number
-            reg, ac_type, bay, cargo, sta, std,
+            reg, ac_type, bay, cargo_arr, cargo_dep, sta, std,
         ))
 
     return schedule
@@ -85,20 +99,20 @@ class MockFlightProvider(FlightDataProvider):
 
     def fetch_flights(self, station: str, scheduled_date: date) -> list[dict]:
         flights = []
-        for arr_fn, dep_fn, reg, ac_type, bay, cargo, sta, std in self._SCHEDULE:
+        for arr_fn, dep_fn, reg, ac_type, bay, cargo_arr, cargo_dep, sta, std in self._SCHEDULE:
             flights.append({
                 "flight_number": arr_fn, "airline": "AK", "station": station,
                 "scheduled_date": scheduled_date, "direction": "ARRIVAL",
                 "scheduled_time": sta, "aircraft_registration": reg,
                 "aircraft_type": ac_type, "bay": bay,
-                "cargo_weight_tons": cargo, "status": "SCHEDULED",
+                "cargo_weight_tons": cargo_arr, "status": "SCHEDULED",
             })
             flights.append({
                 "flight_number": dep_fn, "airline": "AK", "station": station,
                 "scheduled_date": scheduled_date, "direction": "DEPARTURE",
                 "scheduled_time": std, "aircraft_registration": reg,
                 "aircraft_type": ac_type, "bay": bay,
-                "cargo_weight_tons": cargo, "status": "SCHEDULED",
+                "cargo_weight_tons": cargo_dep, "status": "SCHEDULED",
             })
         return flights
 
